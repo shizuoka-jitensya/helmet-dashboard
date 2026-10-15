@@ -14,19 +14,18 @@ try:
     # SecretsからWeb公開用CSV URLを取得
     csv_url = st.secrets["SPREADSHEET_URL"]
     
-    @st.cache_data(ttl=300)  # 5分キャッシュ
-    def load_data(url):
-        return pd.read_csv(url)
+    # データを読み込み（空行を除外せずそのまま読み込む）
+    df = pd.read_csv(csv_url)
+    
+    # 完全に空の行（タイムスタンプ等も空の行）のみ削除
+    df = df.dropna(how='all')
 
-    df = load_data(csv_url)
-
-    # 上部サマリー表示
-    col1, col2, col3 = st.columns(3)
-    col1.metric("回答回答校数", f"{len(df)} 校")
+    # 回答件数の表示
+    st.metric("現在の回答数", f"{len(df)} 件")
     
     st.success("✅ データ取得に成功しました")
 
-    # データ一覧のプレビュー表示
+    # データのテーブル表示
     st.subheader("📊 回答データ一覧")
     st.dataframe(df, use_container_width=True)
 
