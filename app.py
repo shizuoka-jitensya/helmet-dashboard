@@ -1,16 +1,30 @@
 import streamlit as st
 import pandas as pd
+import re
 
 st.set_page_config(page_title="静岡県内高校 自転車通学・ヘルメット着用状況", layout="wide")
 
 st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
 st.caption("対象：静岡県内高校141校")
 
-# SecretsからスプレッドシートURLを取得
 try:
+    # SecretsからURLを取得
     sheet_url = st.secrets["SPREADSHEET_URL"]
-    # CSV出力用URLに変換
-    csv_url = sheet_url.replace("/edit", "/export?format=csv")
+    
+    # スプレッドシートIDを正規表現で抽出
+    match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+    if not match:
+        st.error("スプレッドシートのURL形式が不正です。")
+        st.stop()
+        
+    sheet_id = match.group(1)
+    
+    # gid（シートID）が含まれている場合は抽出、なければデフォルト（0）
+    gid_match = re.search(r"gid=([0-9]+)", sheet_url)
+    gid = gid_match.group(1) if gid_match else "0"
+    
+    # 正しいCSVエクスポート用URLを構築
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     
     @st.cache_data(ttl=600)
     def load_data(url):
@@ -20,10 +34,10 @@ try:
 
     # メトリクス表示
     col1, col2, col3 = st.columns(3)
-    col1.metric("調査対象校数", f"{len(df)} 校")
+    col1.metric("回答回答校数", f"{len(df)} 校")
     
-    # データのプレビュー
-    st.subheader("📊 調査データ一覧")
+    # データのプレビュー表示
+    st.subheader("📊 アンケート集計データ一覧")
     st.dataframe(df, use_container_width=True)
 
 except Exception as e:
