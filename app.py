@@ -25,7 +25,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 住所（市町名・行政区）のみに基づくシンプルな11地区定義
+# 住所（市町名・行政区）のみに基づく11地区定義
 AREA_RULES_ADDR = {
     "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
     "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
@@ -49,7 +49,7 @@ EXCLUDE_KEYS = [
 
 def get_area_by_address_only(address_text):
     """住所文字列のみから11地区を厳密に判定"""
-    if not isinstance(address_text, str) or not address_text:
+    if not isinstance(address_text, str) or not address_text or address_text == "nan":
         return "その他"
     for area, keywords in AREA_RULES_ADDR.items():
         for kw in keywords:
@@ -309,42 +309,43 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # 送付先マスター（138校）から「学校名 ➔ 住所」の参照辞書を作成
-    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
-    master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
+    # ================= 1. 送付先マスター（138校）から「学校名 ➔ 住所」辞書を確実作成 =================
+    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), "学校名")
+    master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), "住所")
     
     school_address_map = {}
-    if not df_master.empty and master_school_col and master_addr_col:
+    if not df_master.empty and master_school_col in df_master.columns and master_addr_col in df_master.columns:
         for _, r in df_master.iterrows():
             s_name = str(r[master_school_col]).strip()
             s_addr = str(r[master_addr_col]).strip()
             if s_name and s_addr:
                 school_address_map[s_name] = s_addr
 
-    # アンケート回答データの地区判定（送付先マスターの住所を参照）
+    # ================= 2. アンケート回答データの地区判定（マスターの住所から一括決定） =================
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
-    survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
-    def judge_survey_area_by_address(row):
-        addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
+    def force_judge_area(row):
+        if not survey_school_col or pd.isna(row[survey_school_col]):
+            return "その他"
         
-        # 回答内に住所がない場合、学校名からマスターの住所を検索して補正
-        if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
-            s_name = str(row[survey_school_col]).strip()
-            # 1. 完全一致
-            if s_name in school_address_map:
-                addr_text = school_address_map[s_name]
-            else:
-                # 2. 部分一致（静高 ➔ 静岡高等学校 など）
-                for m_name, m_addr in school_address_map.items():
-                    if s_name in m_name or m_name in s_name:
-                        addr_text = m_addr
-                        break
-                        
-        return get_area_by_address_only(addr_text)
+        s_name = str(row[survey_school_col]).strip()
+        matched_addr = ""
+        
+        # 1. 送付先マスターとの完全一致検索
+        if s_name in school_address_map:
+            matched_addr = school_address_map[s_name]
+        else:
+            # 2. あいまい・部分一致検索
+            for m_name, m_addr in school_address_map.items():
+                if s_name in m_name or m_name in s_name:
+                    matched_addr = m_addr
+                    break
+        
+        # 3. 拾い上げた住所から11地区を一発判定
+        return get_area_by_address_only(matched_addr)
 
     if not df_survey.empty and survey_school_col:
-        df_survey["地区"] = df_survey.apply(judge_survey_area_by_address, axis=1)
+        df_survey["地区"] = df_survey.apply(force_judge_area, axis=1)
 
     # ================= 事務局（Z001）専用 管理モード・警告 ＆ セキュリティ監視 =================
     if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
@@ -378,28 +379,10 @@ try:
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
 
-        # 3. 🚨 ログイン回数 10回以上の不正アクセス監視警告
-        if not df_stores.empty and "ログイン回数" in df_stores.columns:
-            df_stores_temp = df_stores.copy()
-            df_stores_temp["回数_num"] = pd.to_numeric(df_stores_temp["ログイン回数"], errors='coerce').fillna(0)
-            
-            over_10_stores = df_stores_temp[df_stores_temp["回数_num"] >= 10]
-            
-            if not over_10_stores.empty:
-                st.error(
-                    f"🚨 **【不正利用セキュリティ警告】** ログイン回数が **10回以上** に達している店舗が **{len(over_10_stores)} 件** あります！"
-                    f"アクセスキーの不正共有・横流しの可能性があります。該当店舗を確認し、必要に応じてキーを変更（再発行）してください。",
-                    icon="🔒"
-                )
-                st.write("▼ **10回以上ログインしている店舗リスト:**")
-                show_warn_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in over_10_stores.columns]
-                st.dataframe(over_10_stores[show_warn_cols], use_container_width=True)
-
-        # 4. 全店舗のアクセス状況ログ一覧（直前のシンプル表示に復元）
+        # 3. 全店舗のアクセス状況ログ一覧（シンプルな全件表示）
         with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧"):
             if not df_stores.empty:
-                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
-                st.dataframe(df_stores[show_cols], use_container_width=True)
+                st.dataframe(df_stores, use_container_width=True)
 
         st.markdown("---")
 
@@ -499,7 +482,7 @@ try:
             if selected_q:
                 q_counts = filtered_survey[selected_q].value_counts().reset_index()
                 q_counts.columns = ["回答内容", "校数"]
-                fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
+                fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【设問集計】{selected_q}", hole=0.4)
                 st.plotly_chart(fig_q, use_container_width=True)
 
     with tab3:
