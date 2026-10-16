@@ -229,18 +229,21 @@ try:
     if upload_url:
         try:
             df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
+            df_survey.columns = [c.strip() for c in df_survey.columns]
         except Exception:
             pass
 
     if raw_url:
         try:
             df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
+            df_raw.columns = [c.strip() for c in df_raw.columns]
         except Exception:
             pass
 
     if master_url:
         try:
             df_master = pd.read_csv(master_url).dropna(how='all').reset_index(drop=True)
+            df_master.columns = [c.strip() for c in df_master.columns]
         except Exception:
             pass
 
@@ -324,8 +327,8 @@ try:
             uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
             
             if raw_school_col and uploaded_school_col:
-                raw_schools = set(df_raw[raw_school_col].dropna().unique())
-                uploaded_schools = set(df_survey[uploaded_school_col].dropna().unique())
+                raw_schools = set(df_raw[raw_school_col].dropna().astype(str).str.strip().unique())
+                uploaded_schools = set(df_survey[uploaded_school_col].dropna().astype(str).str.strip().unique())
                 
                 unprocessed = list(raw_schools - uploaded_schools)
                 
@@ -353,7 +356,7 @@ try:
                 )
                 st.write("▼ **10回以上ログインしている店舗リスト:**")
                 show_warn_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in over_10_stores.columns]
-                st.dataframe(over_10_stores[show_warn_cols].astype(str), use_container_width=True)
+                st.dataframe(over_10_stores[show_warn_cols].fillna("").astype(str), use_container_width=True)
 
         # 4. 全店舗のアクセス状況ログ一覧（PyArrowエラー回避のため全列文字列化）
         with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧"):
@@ -363,7 +366,7 @@ try:
 
         st.markdown("---")
 
-    # 138校マスターから「学校名 ➔ 住所」の参照マップを作成
+    # 138校マスターから「学校名 ➔ 住所」の参照マップを作成（判定精度強化）
     master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
     master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
     
@@ -375,16 +378,18 @@ try:
             if s_name and s_addr:
                 school_address_map[s_name] = s_addr
 
-    # アンケート回答データの地区判定
+    # アンケート回答データの地区判定ロジック強化
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
         addr_text = str(row[survey_addr_col]) if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
+        
+        # 住所列がない場合はマスターと学校名（完全・部分一致）で照合して住所を特定
         if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
             s_name = str(row[survey_school_col]).strip()
             for m_name, m_addr in school_address_map.items():
-                if s_name in m_name or m_name in s_name:
+                if s_name == m_name or s_name in m_name or m_name in s_name:
                     addr_text = m_addr
                     break
         return get_area_by_address_only(addr_text)
