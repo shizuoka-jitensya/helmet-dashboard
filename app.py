@@ -523,6 +523,20 @@ try:
     selected_area = st.sidebar.selectbox("地区を選択（他地区も参照可能）", area_list, index=default_index)
     search_keyword = st.sidebar.text_input("学校名で検索")
 
+    # --------------------------------------------------
+    # 📖 検索欄すぐ直下の組合員向けマニュアル（アコーディオン表示）
+    # --------------------------------------------------
+    with st.sidebar.expander("📖 ご利用ガイド・印刷方法"):
+        st.markdown("""
+        **【基本的な使い方】**
+        1. **自地区のデータ表示**
+           ログインすると、まず自店舗の地区の高校データが表示されます。
+        2. **他地区の高校を探す**
+           「地区を選択」で地区を切り替えるか、「学校名で検索」に学校名を入力してください。
+        3. **PDFの保存・印刷（A4縦1枚）**
+           画面中央の **「〇〇高校 回答PDFを保存・印刷」** ボタンを押すと、A4・1枚に整えられたPDFファイルがダウンロードされます。
+        """)
+
     # フィルタリング
     filtered_survey = df_survey.copy()
     if not filtered_survey.empty and survey_school_col:
