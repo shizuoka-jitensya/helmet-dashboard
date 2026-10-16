@@ -21,38 +21,39 @@ st.set_page_config(
     layout="wide"
 )
 
-# 組合公式HPドロップダウン指定に完全準拠した11地区定義
-AREA_RULES = {
-    "賀茂": ["下田", "東伊豆", "河津", "南伊豆", "松崎", "西伊豆", "稲取"],
-    "田方": ["熱海", "伊東", "三島", "伊豆", "伊豆の国", "函南", "韮山", "修善寺", "伊豆中央", "伊豆総合", "知徳"],
-    "沼駿": ["沼津", "御殿場", "裾野", "清水町", "長泉", "小山", "桐陽", "飛龍", "加藤学園"],
-    "富士": ["富士市", "富士宮", "吉原", "星陵"],
-    "清庵": ["清水区", "由比", "蒲原", "清水東", "清水西", "清水南", "清水国際", "清水桜が丘"],
-    "静岡": ["葵区", "駿河区", "城南", "橘", "サレジオ", "常葉", "科学技術"],
-    "志太": ["焼津", "藤枝"],
-    "榛原": ["島田", "牧之原", "吉田町", "川根", "榛原"],
-    "小笠": ["掛川", "菊川", "御前崎", "小笠"],
-    "磐周": ["磐田", "袋井", "森町", "周南"],
-    "西遠": ["浜松", "湖西", "浜名", "オイスカ", "江之島"]
+# 住所（市町名・行政区）のみに基づくシンプルな11地区定義（学校名は絶対に使わない）
+AREA_RULES_ADDR = {
+    "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
+    "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
+    "沼駿": ["沼津市", "御殿場市", "裾野市", "清水町", "長泉町", "小山町", "駿東郡"],
+    "富士": ["富士市", "富士宮市"],
+    "清庵": ["清水区"],
+    "静岡": ["葵区", "駿河区"],
+    "志太": ["焼津市", "藤枝市"],
+    "榛原": ["島田市", "牧之原市", "吉田町", "川根町", "榛原郡"],
+    "小笠": ["掛川市", "菊川市", "御前崎市"],
+    "磐周": ["磐田市", "袋井市", "森町", "周智郡"],
+    "西遠": ["浜松市", "湖西市"]
 }
 
-# 個人情報・連絡先の完全除外リスト（地区は除外から外し、学校名の下に明記）
+# 個人情報・連絡先の完全除外リスト
 EXCLUDE_KEYS = [
     "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
     "ご連絡先（TEL）", "メールアドレス",
     "タイムスタンプ", "データの最終確認日"
 ]
 
-def get_area_from_text(text):
-    if not isinstance(text, str) or not text:
+def get_area_by_address_only(address_text):
+    """住所文字列のみから11地区を厳密に判定"""
+    if not isinstance(address_text, str) or not address_text:
         return "その他"
-    for area, keywords in AREA_RULES.items():
-        for keyword in keywords:
-            if keyword in text:
+    for area, keywords in AREA_RULES_ADDR.items():
+        for kw in keywords:
+            if kw in address_text:
                 return area
     return "その他"
 
-# --- 1. 個別学校 回答PDF生成機能（学校名の下に地区名を出力） ---
+# --- 1. 個別学校 回答PDF生成機能 ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -72,14 +73,11 @@ def generate_school_pdf(school_data):
     
     story.append(Paragraph(f"🚲 静岡県内高校 自転車通学・ヘルメット着用状況 回答シート", title_style))
     story.append(Spacer(1, 4))
-    # 学校名の下に判定された地区名を出力
-    story.append(Paragraph(f"<b>【学校名】 {school_name} （判定地区：{area_name}地区）</b>", sub_style))
+    story.append(Paragraph(f"<b>【学校名】 {school_name} （地区：{area_name}地区）</b>", sub_style))
     story.append(Spacer(1, 8))
 
     table_data = [[Paragraph("<b>項目 / 設問</b>", header_style), Paragraph("<b>回答内容</b>", header_style)]]
-    
-    # 判定地区をテーブル先頭にも挿入
-    table_data.append([Paragraph("判定所属地区", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
+    table_data.append([Paragraph("所属地区（住所より自動判定）", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
 
     for key, val in school_data.items():
         if key == "地区" or any(ex in str(key) for ex in EXCLUDE_KEYS) or pd.isna(val):
@@ -103,7 +101,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別2枚まとめPDF生成機能（2枚目一覧表に地区名出力） ---
+# --- 2. FAX用 地区別2枚まとめPDF生成機能 ---
 def generate_district_fax_pdf(area_name, district_df, total_master_count):
     buffer = io.BytesIO()
     
@@ -166,7 +164,7 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
 
     # 2枚目：13項目 学校別一覧表（A4 横）
     target_q_codes = [
-        ("学校名", "学校"), ("判定地区", "地区"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
+        ("学校名", "学校"), ("地区", "地区"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
         ("Q10", "Q10."), ("Q11", "Q11."), ("Q12", "Q12."), ("Q13", "Q13."),
         ("Q14", "Q14."), ("Q16", "Q16."), ("Q18-1", "Q18-1"), ("Q18-2", "Q18-2"),
         ("Q18-3", "Q18-3"), ("Q19", "Q19")
@@ -178,7 +176,7 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     for _, row in district_df.iterrows():
         row_cells = []
         for title, code in target_q_codes:
-            if title == "判定地区":
+            if title == "地区":
                 val = str(row.get("地区", "その他"))
             else:
                 col_name = next((c for c in district_df.columns if code in c), None)
@@ -192,7 +190,6 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    # 15列の幅調整
     col_w = [75, 45] + [52] * 13
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
@@ -206,7 +203,7 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
         ('RIGHTPADDING', (0,0), (-1,-1), 2),
     ]))
 
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧（所属地区判定つき）</b>", title_style))
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧（13項目）</b>", title_style))
     story.append(Spacer(1, 8))
     story.append(m_table)
 
@@ -292,26 +289,46 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # 地区判定（住所優先、無ければ校名から判定。判定不能時は「その他」）
+    # 137校マスターから学校名・住所の対応辞書を作成
+    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
+    master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
+    
+    school_address_map = {}
+    if not df_master.empty and master_school_col and master_addr_col:
+        for _, r in df_master.iterrows():
+            s_name = str(r[master_school_col]).strip()
+            s_addr = str(r[master_addr_col]).strip()
+            if s_name and s_addr:
+                school_address_map[s_name] = s_addr
+
+    # アンケート回答への「住所に基づく地区判定」付与
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
-    def judge_survey_area(row):
+    def judge_survey_area_by_address(row):
+        # 1. アンケート内に住所があればそれを使用
         addr_text = str(row[survey_addr_col]) if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
-        school_text = str(row[survey_school_col]) if pd.notna(row[survey_school_col]) else ""
-        area = get_area_from_text(addr_text)
-        if area == "その他":
-            area = get_area_from_text(school_text)
-        return area
+        
+        # 2. 無ければ送付先マスター（137校）から住所を引っ張ってくる
+        if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
+            s_name = str(row[survey_school_col]).strip()
+            # 完全一致または部分一致でマスターの住所を取得
+            for m_name, m_addr in school_address_map.items():
+                if s_name in m_name or m_name in s_name:
+                    addr_text = m_addr
+                    break
+        
+        # 3. 住所から地区を判定（学校名は一切使わない）
+        return get_area_by_address_only(addr_text)
 
     if not df_survey.empty and survey_school_col:
-        df_survey["地区"] = df_survey.apply(judge_survey_area, axis=1)
+        df_survey["地区"] = df_survey.apply(judge_survey_area_by_address, axis=1)
 
     # サイドバー絞り込み
     st.sidebar.header("🔍 絞り込み検索")
-    area_list = ["すべての地区（全県）"] + list(AREA_RULES.keys()) + ["その他"]
+    area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["その他"]
     default_index = 0
-    if store.get("地区") in AREA_RULES:
+    if store.get("地区") in AREA_RULES_ADDR:
         default_index = area_list.index(store.get("地区"))
 
     selected_area = st.sidebar.selectbox("地区を選択（他地区も参照可能）", area_list, index=default_index)
@@ -329,8 +346,6 @@ try:
     col1, col2, col3, col4 = st.columns(4)
     total_responses = len(df_survey)
     col1.metric("アンケート回答数", f"{total_responses} 校")
-    
-    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
 
     if not df_master.empty and master_school_col:
         total_master = len(df_master)
@@ -354,13 +369,10 @@ try:
         # 1. 地区別まとめFAX PDFダウンロード
         if selected_area != "すべての地区（全県）" and not filtered_survey.empty:
             st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区集計・一覧2枚まとめPDF")
-            st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横・地区判定つき）")
+            st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横）")
             
-            master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
-            if not df_master.empty and master_school_col:
-                df_master["地区"] = df_master.apply(
-                    lambda r: get_area_from_text(str(r[master_addr_col]) if master_addr_col and pd.notna(r[master_addr_col]) else str(r[master_school_col])), axis=1
-                )
+            if not df_master.empty and master_school_col and master_addr_col:
+                df_master["地区"] = df_master[master_addr_col].apply(get_area_by_address_only)
                 district_master_count = len(df_master[df_master["地区"] == selected_area])
             else:
                 district_master_count = len(filtered_survey)
@@ -390,8 +402,7 @@ try:
             )
             
             st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', 'その他')}地区）")
-            # 個人情報を除外し、地区を上位に配置した表示用リスト
-            display_items = [("所属地区", f"{school_data.get('地区', 'その他')}地区")]
+            display_items = [("所属地区（住所より判定）", f"{school_data.get('地区', 'その他')}地区")]
             for k, v in school_data.items():
                 if k != "地区" and not any(ex in str(k) for ex in EXCLUDE_KEYS):
                     display_items.append((k, v))
@@ -414,18 +425,8 @@ try:
 
     with tab3:
         st.subheader("⚠️ 未回答校の進捗管理")
-        if not df_master.empty and master_school_col:
-            master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None)
-            
-            def judge_master_area(row):
-                addr_text = str(row[master_addr_col]) if master_addr_col and pd.notna(row[master_addr_col]) else ""
-                school_text = str(row[master_school_col]) if pd.notna(row[master_school_col]) else ""
-                area = get_area_from_text(addr_text)
-                if area == "その他":
-                    area = get_area_from_text(school_text)
-                return area
-
-            df_master["地区"] = df_master.apply(judge_master_area, axis=1)
+        if not df_master.empty and master_school_col and master_addr_col:
+            df_master["地区"] = df_master[master_addr_col].apply(get_area_by_address_only)
             
             answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist() if not df_survey.empty and survey_school_col else []
             
