@@ -275,7 +275,6 @@ try:
                         st.session_state.authenticated = True
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
                         
-                        # 日本時間タイムスタンプ設定
                         now_jst = datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
                         st.session_state.store_info["最終ログイン日時"] = now_jst
                         
@@ -307,11 +306,19 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # ================= 事務局（Z001）専用 管理モード・精査漏れ警告 ＆ 店舗ログイン監視 =================
+    # ================= 事務局（Z001）専用 管理モード・警告 ＆ セキュリティ監視 =================
     if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # 精査漏れチェック
+        # 1. 事務局自身のログイン情報・回数表示
+        if not df_stores.empty:
+            z001_row = df_stores[df_stores["店舗ID"].astype(str).str.contains("Z001") | df_stores["アクセスキー"].astype(str).str.contains("HV4F6HB")]
+            if not z001_row.empty:
+                z_cnt = z001_row.iloc[0].get("ログイン回数", "-")
+                z_time = z001_row.iloc[0].get("最終ログイン日時", "-")
+                st.caption(f"🏢 **事務局（Z001）アクセス履歴**: 累計ログイン回数 **{z_cnt} 回** ｜ 最終ログイン日時: **{z_time}**")
+
+        # 2. 精査漏れ警告
         if not df_raw.empty and not df_survey.empty:
             raw_school_col = next((c for c in df_raw.columns if "学校" in str(c)), None)
             uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
@@ -331,13 +338,30 @@ try:
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
 
-        # 店舗マスターのログインアクセス状況の監視エリア
-        with st.expander("📊 【事務局専用】全店舗のログイン・アクセス状況ログの確認"):
+        # 3. 🚨 ログイン回数 10回以上の不正アクセス監視警告
+        if not df_stores.empty and "ログイン回数" in df_stores.columns:
+            # ログイン回数を数値化
+            df_stores_temp = df_stores.copy()
+            df_stores_temp["回数_num"] = pd.to_numeric(df_stores_temp["ログイン回数"], errors='coerce').fillna(0)
+            
+            # 10回以上の店舗をフィルタリング
+            over_10_stores = df_stores_temp[df_stores_temp["回数_num"] >= 10]
+            
+            if not over_10_stores.empty:
+                st.error(
+                    f"🚨 **【不正利用セキュリティ警告】** ログイン回数が **10回以上** に達している店舗が **{len(over_10_stores)} 件** あります！"
+                    f"アクセスキーの不正共有・横流しの可能性があります。該当店舗を確認し、必要に応じてキーを変更（再発行）してください。",
+                    icon="🔒"
+                )
+                st.write("▼ **10回以上ログインしている店舗リスト:**")
+                show_warn_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in over_10_stores.columns]
+                st.dataframe(over_10_stores[show_warn_cols], use_container_width=True)
+
+        # 4. 全店舗のアクセス状況ログ一覧（折りたたみ）
+        with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧"):
             if not df_stores.empty:
                 show_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
                 st.dataframe(df_stores[show_cols], use_container_width=True)
-            else:
-                st.caption("店舗マスターのデータがありません。")
 
         st.markdown("---")
 
