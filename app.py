@@ -36,11 +36,11 @@ AREA_RULES = {
     "西遠": ["浜松", "湖西", "浜名", "オイスカ", "江之島"]
 }
 
-# 個人情報・連絡先の完全除外リスト
+# 個人情報・連絡先の完全除外リスト（地区は除外から外し、学校名の下に明記）
 EXCLUDE_KEYS = [
     "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
     "ご連絡先（TEL）", "メールアドレス",
-    "地区", "タイムスタンプ", "データの最終確認日"
+    "タイムスタンプ", "データの最終確認日"
 ]
 
 def get_area_from_text(text):
@@ -52,7 +52,7 @@ def get_area_from_text(text):
                 return area
     return "その他"
 
-# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚） ---
+# --- 1. 個別学校 回答PDF生成機能（学校名の下に地区名を出力） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -63,17 +63,26 @@ def generate_school_pdf(school_data):
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=14, leading=18, alignment=1)
+    sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=11, leading=15, alignment=1)
     body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11)
     header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11, textColor=colors.whitesmoke)
 
     school_name = str(school_data.get('学校名', '高校アンケート回答'))
+    area_name = str(school_data.get('地区', 'その他'))
+    
     story.append(Paragraph(f"🚲 静岡県内高校 自転車通学・ヘルメット着用状況 回答シート", title_style))
+    story.append(Spacer(1, 4))
+    # 学校名の下に判定された地区名を出力
+    story.append(Paragraph(f"<b>【学校名】 {school_name} （判定地区：{area_name}地区）</b>", sub_style))
     story.append(Spacer(1, 8))
 
     table_data = [[Paragraph("<b>項目 / 設問</b>", header_style), Paragraph("<b>回答内容</b>", header_style)]]
     
+    # 判定地区をテーブル先頭にも挿入
+    table_data.append([Paragraph("判定所属地区", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
+
     for key, val in school_data.items():
-        if any(ex in str(key) for ex in EXCLUDE_KEYS) or pd.isna(val):
+        if key == "地区" or any(ex in str(key) for ex in EXCLUDE_KEYS) or pd.isna(val):
             continue
         q_text = Paragraph(str(key), body_style)
         a_text = Paragraph(str(val), body_style)
@@ -94,7 +103,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別2枚まとめPDF生成機能（1枚目:サマリー / 2枚目:13項目一覧表） ---
+# --- 2. FAX用 地区別2枚まとめPDF生成機能（2枚目一覧表に地区名出力） ---
 def generate_district_fax_pdf(area_name, district_df, total_master_count):
     buffer = io.BytesIO()
     
@@ -107,14 +116,13 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     
     story = []
 
-    # ================= 1枚目：地区サマリー（A4 縦） =================
+    # 1枚目：地区サマリー（A4 縦）
     doc_p1 = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     
     story.append(Paragraph(f"🚲 【組合員限定・非公表】 {area_name}地区 高校自転車通学・ヘルメット着用状況", title_style))
     story.append(Paragraph(f"（FAX送信用 地区集計サマリー）", subtitle_style))
     story.append(Spacer(1, 15))
 
-    # 回答実績データ
     ans_count = len(district_df)
     rate_str = f"{int((ans_count/total_master_count)*100)}%" if total_master_count > 0 else "-"
     summary_text = f"<b>■ {area_name}地区の回答状況</b><br/>" \
@@ -123,7 +131,6 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     story.append(Paragraph(summary_text, body_style))
     story.append(Spacer(1, 15))
 
-    # 主要設問の傾向表
     story.append(Paragraph("<b>■ 主要設問の地区内回答傾向</b>", body_style))
     story.append(Spacer(1, 5))
 
@@ -155,28 +162,28 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     ]))
     story.append(st_table)
     
-    # 2枚目（一覧表）へ改ページ
     story.append(PageBreak())
 
-    # ================= 2枚目：13項目 学校別一覧表（A4 横） =================
+    # 2枚目：13項目 学校別一覧表（A4 横）
     target_q_codes = [
-        ("学校名", "学校"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
+        ("学校名", "学校"), ("判定地区", "地区"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
         ("Q10", "Q10."), ("Q11", "Q11."), ("Q12", "Q12."), ("Q13", "Q13."),
         ("Q14", "Q14."), ("Q16", "Q16."), ("Q18-1", "Q18-1"), ("Q18-2", "Q18-2"),
         ("Q18-3", "Q18-3"), ("Q19", "Q19")
     ]
 
-    # ヘッダー列の作成
     matrix_hdr = [Paragraph(f"<b>{title}</b>", hdr_style) for title, _ in target_q_codes]
     matrix_data = [matrix_hdr]
 
     for _, row in district_df.iterrows():
         row_cells = []
         for title, code in target_q_codes:
-            col_name = next((c for c in district_df.columns if code in c), None)
-            val = str(row[col_name]) if col_name and pd.notna(row[col_name]) else "-"
+            if title == "判定地区":
+                val = str(row.get("地区", "その他"))
+            else:
+                col_name = next((c for c in district_df.columns if code in c), None)
+                val = str(row[col_name]) if col_name and pd.notna(row[col_name]) else "-"
             
-            # 長い選択肢の簡易化（一覧表用）
             val_short = val.replace("（「自転車安全整備店の章」を有する自転車店）", "")\
                            .replace("変形ハンドルは一切禁止（極端なアップハンドル、カマキリ型、ドロップハンドルなど）", "変形禁止")\
                            .replace("両立スタンド（Wスタンド）を推奨もしくは、望ましい", "Wスタンド推奨")\
@@ -185,8 +192,8 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    # 14列の横幅計算 (A4横 幅841.89pt - 余白40pt = 801.89pt)
-    col_w = [85] + [55] * 13
+    # 15列の幅調整
+    col_w = [75, 45] + [52] * 13
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
@@ -199,11 +206,10 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
         ('RIGHTPADDING', (0,0), (-1,-1), 2),
     ]))
 
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧（13項目）</b>", title_style))
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧（所属地区判定つき）</b>", title_style))
     story.append(Spacer(1, 8))
     story.append(m_table)
 
-    # A4横向きドキュメント構築
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     doc.build(story)
     buffer.seek(0)
@@ -243,7 +249,7 @@ try:
         st.session_state.authenticated = False
         st.session_state.store_info = None
 
-    # --- 1. ログイン認証画面（大文字・小文字不問） ---
+    # --- 1. ログイン認証画面 ---
     if not st.session_state.authenticated:
         st.title("🔒 自転車組合 組合員専用閲覧システム")
         st.caption("※当システムの情報は組合事務局集計によるものであり、組合外部・一般には非公表です。")
@@ -286,7 +292,7 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # 地区判定
+    # 地区判定（住所優先、無ければ校名から判定。判定不能時は「その他」）
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
@@ -348,9 +354,8 @@ try:
         # 1. 地区別まとめFAX PDFダウンロード
         if selected_area != "すべての地区（全県）" and not filtered_survey.empty:
             st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区集計・一覧2枚まとめPDF")
-            st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横）")
+            st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横・地区判定つき）")
             
-            # 対象地区のマスター全高校数取得
             master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
             if not df_master.empty and master_school_col:
                 df_master["地区"] = df_master.apply(
@@ -378,15 +383,19 @@ try:
             
             school_pdf_bytes = generate_school_pdf(school_data)
             st.download_button(
-                label=f"📥 【{selected_school_name}】 回答PDFを保存・印刷",
+                label=f"📥 【{selected_school_name}】 回答PDFを保存・印刷（地区名入り）",
                 data=school_pdf_bytes,
                 file_name=f"{selected_school_name}_アンケート回答.pdf",
                 mime="application/pdf"
             )
             
-            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（個人情報除外）")
-            # 個人情報を除外したテーブル表示
-            display_items = [(k, v) for k, v in school_data.items() if not any(ex in str(k) for ex in EXCLUDE_KEYS)]
+            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', 'その他')}地区）")
+            # 個人情報を除外し、地区を上位に配置した表示用リスト
+            display_items = [("所属地区", f"{school_data.get('地区', 'その他')}地区")]
+            for k, v in school_data.items():
+                if k != "地区" and not any(ex in str(k) for ex in EXCLUDE_KEYS):
+                    display_items.append((k, v))
+            
             detail_df = pd.DataFrame(display_items, columns=["項目・設問", "回答内容"])
             st.dataframe(detail_df, use_container_width=True)
         else:
