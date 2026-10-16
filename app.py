@@ -16,17 +16,18 @@ AREA_RULES = {
     "賀茂": ["下田", "東伊豆", "河津", "南伊豆", "松崎", "西伊豆", "稲取"],
     "田方": ["熱海", "伊東", "三島", "伊豆", "伊豆の国", "函南", "韮山", "修善寺", "伊豆中央", "伊豆総合", "知徳"],
     "沼駿": ["沼津", "御殿場", "裾野", "清水町", "長泉", "小山", "桐陽", "飛龍", "加藤学園"],
-    "富士": ["富士", "富士宮", "吉原", "星陵"],
-    "清庵": ["清水東", "清水西", "清水南", "清水国際", "清水桜が丘", "由比", "蒲原"],
-    "静岡": ["葵区", "駿河区", "静岡", "城南", "橘", "サレジオ", "常葉", "科学技術"],
+    "富士": ["富士市", "富士宮", "吉原", "星陵"],
+    "清庵": ["清水区", "由比", "蒲原", "清水東", "清水西", "清水南", "清水国際", "清水桜が丘"],
+    "静岡": ["葵区", "駿河区", "城南", "橘", "サレジオ", "常葉", "科学技術"],
     "志太": ["焼津", "藤枝"],
-    "榛原": ["島田", "牧之原", "吉田", "川根", "榛原"],
+    "榛原": ["島田", "牧之原", "吉田町", "川根", "榛原"],
     "小笠": ["掛川", "菊川", "御前崎", "小笠"],
     "磐周": ["磐田", "袋井", "森町", "周南"],
     "西遠": ["浜松", "湖西", "浜名", "オイスカ", "江之島"]
 }
 
 def get_area_from_text(text):
+    """テキスト（住所や学校名）から地区名を判定"""
     if not isinstance(text, str) or not text:
         return "その他"
     for area, keywords in AREA_RULES.items():
@@ -53,19 +54,30 @@ try:
         except Exception:
             pass
 
-    # アンケート側の学校名列特定
+    # アンケート側の「学校名」および「住所」列特定
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None)
     if not survey_school_col and len(df_survey.columns) > 1:
         survey_school_col = df_survey.columns[1]
+
+    survey_address_col = next((col for col in df_survey.columns if "住所" in str(col)), None)
 
     # 回答済みの学校名リスト抽出
     answered_schools = []
     if survey_school_col and len(df_survey) > 0:
         answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist()
 
-    # 地区の自動判定付与（アンケートデータ）
-    if survey_school_col:
-        df_survey["地区"] = df_survey[survey_school_col].astype(str).apply(get_area_from_text)
+    # アンケートデータの地区自動判定（住所 ＞ 学校名 の優先順位）
+    def judge_survey_area(row):
+        addr_text = str(row[survey_address_col]) if survey_address_col and pd.notna(row[survey_address_col]) else ""
+        school_text = str(row[survey_school_col]) if survey_school_col and pd.notna(row[survey_school_col]) else ""
+        # 住所から優先判定、判定できなければ学校名から判定
+        area = get_area_from_text(addr_text)
+        if area == "その他":
+            area = get_area_from_text(school_text)
+        return area
+
+    if len(df_survey) > 0:
+        df_survey["地区"] = df_survey.apply(judge_survey_area, axis=1)
     else:
         df_survey["地区"] = "その他"
 
@@ -74,7 +86,6 @@ try:
     # ---------------------------------------------------------
     st.sidebar.header("🔍 絞り込み検索")
     
-    # 公式11地区のドロップダウンメニュー
     area_options = ["すべての地区（全県）"] + list(AREA_RULES.keys()) + ["その他"]
     selected_area = st.sidebar.selectbox("地区で絞り込み", area_options)
     
@@ -141,15 +152,20 @@ try:
     with tab3:
         st.subheader("⚠️ 未回答校の進捗管理")
         if not df_master.empty and master_school_col:
-            # マスターシート側の住所・学校名から住所文字列を生成して地区判定
-            address_col = next((c for c in df_master.columns if "住所" in str(c)), "")
+            # 送付先マスターの地区判定（住所を優先参照）
+            master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None)
             
-            def match_master_area(row):
-                text_to_search = str(row[master_school_col]) + " " + (str(row[address_col]) if address_col else "")
-                return get_area_from_text(text_to_search)
+            def judge_master_area(row):
+                addr_text = str(row[master_addr_col]) if master_addr_col and pd.notna(row[master_addr_col]) else ""
+                school_text = str(row[master_school_col]) if pd.notna(row[master_school_col]) else ""
+                area = get_area_from_text(addr_text)
+                if area == "その他":
+                    area = get_area_from_text(school_text)
+                return area
 
-            df_master["地区"] = df_master.apply(match_master_area, axis=1)
+            df_master["地区"] = df_master.apply(judge_master_area, axis=1)
             
+            # 回答ステータスの突合
             df_master["回答ステータス"] = df_master[master_school_col].apply(
                 lambda x: "回答済み" if any(ans in str(x) or str(x) in ans for ans in answered_schools) else "未回答"
             )
@@ -160,7 +176,7 @@ try:
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
             
-            show_cols = [c for c in ["地区", "設置区分", master_school_col, "電話番号", "メールアドレス / 連絡先状況"] if c in df_unanswered.columns]
+            show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号", "メールアドレス / 連絡先状況"] if c in df_unanswered.columns]
             st.dataframe(df_unanswered[show_cols], use_container_width=True)
         else:
             st.info("💡 送付先学校一覧シート（MASTER_SPREADSHEET_URL）を設定すると、ここに未回答校リストが自動表示されます。")
