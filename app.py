@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+from datetime import datetime
+import pytz
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
 from reportlab.lib.pagesizes import A4, landscape
@@ -21,7 +23,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 住所（市町名・行政区）のみに基づくシンプルな11地区定義（住所から厳密判定）
+# 住所（市町名・行政区）のみに基づくシンプルな11地区定義
 AREA_RULES_ADDR = {
     "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
     "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
@@ -36,7 +38,7 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-# 個人情報・連絡先の完全除外リスト（個人情報・メールアドレス・TEL等は出力されません）
+# 個人情報・連絡先の完全除外リスト
 EXCLUDE_KEYS = [
     "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
     "ご連絡先（TEL）", "メールアドレス",
@@ -114,7 +116,6 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     
     story = []
 
-    # 1枚目：地区サマリー（A4 縦）
     doc_p1 = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     
     story.append(Paragraph(f"🚲 【組合員限定・非公表】 {area_name}地区 高校自転車通学・ヘルメット着用状況", title_style))
@@ -162,7 +163,6 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     
     story.append(PageBreak())
 
-    # 2枚目：13項目 学校別一覧表（A4 横）
     target_q_codes = [
         ("学校名", "学校"), ("地区", "地区"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
         ("Q10", "Q10."), ("Q11", "Q11."), ("Q12", "Q12."), ("Q13", "Q13."),
@@ -214,17 +214,28 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
 
 # --- データの読み込み＆メイン処理 ---
 try:
-    csv_url = st.secrets.get("SPREADSHEET_URL")
+    # 各シートのURLを取得
+    upload_url = st.secrets.get("SPREADSHEET_URL") # アップロード用シート（精査済み）
+    raw_url = st.secrets.get("RAW_SPREADSHEET_URL") # アンケート集計シート（生データ）
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
     store_url = st.secrets.get("STORE_SPREADSHEET_URL")
 
     df_survey = pd.DataFrame()
+    df_raw = pd.DataFrame()
     df_master = pd.DataFrame()
     df_stores = pd.DataFrame()
 
-    if csv_url:
+    # 精査済み（アップロード用）データ読み込み
+    if upload_url:
         try:
-            df_survey = pd.read_csv(csv_url).dropna(how='all').reset_index(drop=True)
+            df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
+        except Exception:
+            pass
+
+    # 生データ（アンケート集計）読み込み（事務局警告用）
+    if raw_url:
+        try:
+            df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
         except Exception:
             pass
 
@@ -264,13 +275,18 @@ try:
                     if not valid_store.empty and pd.notna(cleaned_input) and cleaned_input != "":
                         st.session_state.authenticated = True
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
+                        
+                        # ログイン成功時：タイムスタンプとログイン回数を記録（セッション保持）
+                        now_jst = datetime.now(pytz.timezone('Asia/Tokyo')).strftime('%Y/%m/%d %H:%M:%S')
+                        st.session_state.store_info["最終ログイン日時"] = now_jst
+                        
                         st.success("認証に成功しました。")
                         st.rerun()
                     else:
                         st.error("アクセスキーが正しくないか、無効（脱退・未登録）です。組合事務局にお問い合わせください。")
-                elif cleaned_input == "ADMIN123":
+                elif cleaned_input in ["ADMIN123", "HV4F6HB", "Z001"]:
                     st.session_state.authenticated = True
-                    st.session_state.store_info = {"店舗名": "組合事務局", "地区": "全県"}
+                    st.session_state.store_info = {"店舗ID": "Z001", "店舗名": "静岡県自転車組合 事務局", "地区": "本部", "アクセスキー": "HV4F6HB"}
                     st.rerun()
                 else:
                     st.error("店舗マスターが読み込めていないか、アクセスキーが無効です。")
@@ -278,8 +294,11 @@ try:
 
     # --- 2. ログイン後のメイン画面 ---
     store = st.session_state.store_info
+    store_id = str(store.get('店舗ID', '')).strip()
+    access_key = str(store.get('アクセスキー', '')).strip().upper()
     
     st.sidebar.markdown(f"**ログイン店舗:** {store.get('店舗名', '組合員')}")
+    st.sidebar.markdown(f"**店舗ID:** {store_id}")
     st.sidebar.markdown(f"**自地区:** {store.get('地区', '-')}地区")
     if st.sidebar.button("ログアウト"):
         st.session_state.authenticated = False
@@ -288,6 +307,32 @@ try:
 
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
+
+    # ================= 事務局（Z001）専用 管理モード・精査漏れ警告 =================
+    if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
+        st.info("🛠 **【事務局管理者モード】** ログイン中")
+        
+        # アンケート集計（生データ）とアップロード用（精査済み）の照合
+        if not df_raw.empty and not df_survey.empty:
+            raw_school_col = next((c for c in df_raw.columns if "学校" in str(c)), None)
+            uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
+            
+            if raw_school_col and uploaded_school_col:
+                raw_schools = set(df_raw[raw_school_col].dropna().unique())
+                uploaded_schools = set(df_survey[uploaded_school_col].dropna().unique())
+                
+                # 生データにあってアップロード用にまだ入っていない学校
+                unprocessed = list(raw_schools - uploaded_schools)
+                
+                if unprocessed:
+                    st.warning(
+                        f"🚨 **【精査・移動漏れ警告】** 「アンケート集計」シートに回答が届いていますが、まだ「アップロード用」シートへ反映されていない学校が **{len(unprocessed)} 件** あります！<br/>"
+                        f"**未反映の学校:** {', '.join(unprocessed)}",
+                        icon="⚠️"
+                    )
+                else:
+                    st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
+        st.markdown("---")
 
     # 138校マスターから「学校名 ➔ 住所」の参照マップを作成
     master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
@@ -301,24 +346,18 @@ try:
             if s_name and s_addr:
                 school_address_map[s_name] = s_addr
 
-    # アンケート回答データの地区判定（精査済みデータ用）
+    # アンケート回答データの地区判定
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
-        # 1. 回答内に住所があれば優先利用
         addr_text = str(row[survey_addr_col]) if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
-        
-        # 2. 無ければ送付先マスター（138校）から住所を特定
         if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
             s_name = str(row[survey_school_col]).strip()
-            # マスターの学校名と完全・部分一致検索
             for m_name, m_addr in school_address_map.items():
                 if s_name in m_name or m_name in s_name:
                     addr_text = m_addr
                     break
-        
-        # 3. 住所から11地区を一発判定（学校名は判定に使用しない）
         return get_area_by_address_only(addr_text)
 
     if not df_survey.empty and survey_school_col:
@@ -345,7 +384,7 @@ try:
     # 上部サマリーカード
     col1, col2, col3, col4 = st.columns(4)
     total_responses = len(df_survey)
-    col1.metric("アンケート回答数", f"{total_responses} 校")
+    col1.metric("アンケート回答数（精査済み）", f"{total_responses} 校")
 
     if not df_master.empty and master_school_col:
         total_master = len(df_master)
