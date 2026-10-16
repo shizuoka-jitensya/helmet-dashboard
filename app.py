@@ -375,11 +375,9 @@ try:
             return get_area_by_address_only(row.get(master_addr_col, ""))
         return "要確認"
 
-    # 学校マスターの「地区」を一括設定（既存の地区上書き事故を防止）
     if not df_master.empty:
         df_master["地区"] = df_master.apply(get_master_area, axis=1)
 
-    # 学校名 ➔ 住所 / 地区 のマッピング辞書作成
     school_address_map = {}
     school_area_map = {}
     if master_school_col:
@@ -392,7 +390,6 @@ try:
                     school_address_map[school_name] = address
                 school_area_map[school_name] = area
 
-    # アンケート回答データの地区設定
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
@@ -400,20 +397,16 @@ try:
         if survey_school_col and pd.notna(row[survey_school_col]):
             s_name = normalize_school_name(row[survey_school_col])
             
-            # 1. 学校マスターの地区指定があれば最優先採用
             if s_name in school_area_map and school_area_map[s_name] in AREA_RULES_ADDR:
                 return school_area_map[s_name]
             
-            # 2. 完全一致の住所検索
             if s_name in school_address_map:
                 return get_area_by_address_only(school_address_map[s_name])
             
-            # 3. 部分一致検索（安全判定）
             matches = [m_addr for m_name, m_addr in school_address_map.items() if s_name in m_name or m_name in s_name]
             if len(matches) == 1:
                 return get_area_by_address_only(matches[0])
 
-        # 回答側入力の住所より判定
         addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
         return get_area_by_address_only(addr_text)
 
@@ -425,12 +418,19 @@ try:
     if is_admin:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # 1. 事務局自身のアクセス履歴表示
+        # 1. 事務局自身のアクセス履歴表示（nan補正付き）
         if not df_stores.empty:
-            z001_row = df_stores[df_stores["店舗ID"].astype(str).str.contains("Z001") | df_stores["アクセスキー"].astype(str).str.contains("HV4F6HB")]
+            z001_row = df_stores[
+                df_stores["店舗ID"].astype(str).str.upper().str.contains("Z001") | 
+                df_stores["アクセスキー"].astype(str).str.upper().str.contains("HV4F6HB")
+            ]
             if not z001_row.empty:
-                z_cnt = z001_row.iloc[0].get("ログイン回数", "-")
-                z_time = z001_row.iloc[0].get("最終ログイン日時", "-")
+                z_cnt_raw = z001_row.iloc[0].get("ログイン回数", None)
+                z_time_raw = z001_row.iloc[0].get("最終ログイン日時", None)
+                
+                z_cnt = "0" if pd.isna(z_cnt_raw) or str(z_cnt_raw).lower() == "nan" else str(z_cnt_raw)
+                z_time = st.session_state.store_info.get("最終ログイン日時", "未ログイン") if pd.isna(z_time_raw) or str(z_time_raw).lower() == "nan" else str(z_time_raw)
+                
                 st.caption(f"🏢 **事務局（Z001）アクセス履歴**: 累計ログイン回数 **{z_cnt} 回** ｜ 最終ログイン日時: **{z_time}**")
 
         # 2. 精査漏れ警告
@@ -446,7 +446,7 @@ try:
                 
                 if unprocessed:
                     st.warning(
-                        f"🚨 **【精査・移動漏れ警告】** 「アンケート集計」シートに回答が届いていますが、まだ「アップアップロード用」シートへ反映されていない学校が **{len(unprocessed)} 件** あります！<br/>"
+                        f"🚨 **【精査・移動漏れ警告】** 「アンケート集計」シートに回答が届いていますが、まだ「アップロード用」シートへ反映されていない学校が **{len(unprocessed)} 件** あります！<br/>"
                         f"**未反映の学校:** {', '.join(unprocessed)}",
                         icon="⚠️"
                     )
