@@ -21,7 +21,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 住所（市町名・行政区）のみに基づくシンプルな11地区定義（学校名は絶対に使わない）
+# 住所（市町名・行政区）のみに基づくシンプルな11地区定義（住所から厳密判定）
 AREA_RULES_ADDR = {
     "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
     "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
@@ -36,7 +36,7 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-# 個人情報・連絡先の完全除外リスト
+# 個人情報・連絡先の完全除外リスト（個人情報・メールアドレス・TEL等は出力されません）
 EXCLUDE_KEYS = [
     "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
     "ご連絡先（TEL）", "メールアドレス",
@@ -289,7 +289,7 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # 137校マスターから学校名・住所の対応辞書を作成
+    # 138校マスターから「学校名 ➔ 住所」の参照マップを作成
     master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
     master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
     
@@ -301,24 +301,24 @@ try:
             if s_name and s_addr:
                 school_address_map[s_name] = s_addr
 
-    # アンケート回答への「住所に基づく地区判定」付与
+    # アンケート回答データの地区判定（精査済みデータ用）
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
-        # 1. アンケート内に住所があればそれを使用
+        # 1. 回答内に住所があれば優先利用
         addr_text = str(row[survey_addr_col]) if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
         
-        # 2. 無ければ送付先マスター（137校）から住所を引っ張ってくる
+        # 2. 無ければ送付先マスター（138校）から住所を特定
         if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
             s_name = str(row[survey_school_col]).strip()
-            # 完全一致または部分一致でマスターの住所を取得
+            # マスターの学校名と完全・部分一致検索
             for m_name, m_addr in school_address_map.items():
                 if s_name in m_name or m_name in s_name:
                     addr_text = m_addr
                     break
         
-        # 3. 住所から地区を判定（学校名は一切使わない）
+        # 3. 住所から11地区を一発判定（学校名は判定に使用しない）
         return get_area_by_address_only(addr_text)
 
     if not df_survey.empty and survey_school_col:
