@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
+
+# 日本時間（JST: UTC+9）の定義（外部ライブラリ不要）
+JST = timezone(timedelta(hours=9))
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
 from reportlab.lib.pagesizes import A4, landscape
@@ -214,7 +216,6 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
 
 # --- データの読み込み＆メイン処理 ---
 try:
-    # 各シートのURLを取得
     upload_url = st.secrets.get("SPREADSHEET_URL") # アップロード用シート（精査済み）
     raw_url = st.secrets.get("RAW_SPREADSHEET_URL") # アンケート集計シート（生データ）
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
@@ -225,14 +226,12 @@ try:
     df_master = pd.DataFrame()
     df_stores = pd.DataFrame()
 
-    # 精査済み（アップロード用）データ読み込み
     if upload_url:
         try:
             df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
         except Exception:
             pass
 
-    # 生データ（アンケート集計）読み込み（事務局警告用）
     if raw_url:
         try:
             df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
@@ -276,8 +275,8 @@ try:
                         st.session_state.authenticated = True
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
                         
-                        # ログイン成功時：タイムスタンプとログイン回数を記録（セッション保持）
-                        now_jst = datetime.now(pytz.timezone('Asia/Tokyo')).strftime('%Y/%m/%d %H:%M:%S')
+                        # 日本時間タイムスタンプ設定
+                        now_jst = datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
                         st.session_state.store_info["最終ログイン日時"] = now_jst
                         
                         st.success("認証に成功しました。")
@@ -312,7 +311,6 @@ try:
     if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # アンケート集計（生データ）とアップロード用（精査済み）の照合
         if not df_raw.empty and not df_survey.empty:
             raw_school_col = next((c for c in df_raw.columns if "学校" in str(c)), None)
             uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
@@ -321,7 +319,6 @@ try:
                 raw_schools = set(df_raw[raw_school_col].dropna().unique())
                 uploaded_schools = set(df_survey[uploaded_school_col].dropna().unique())
                 
-                # 生データにあってアップロード用にまだ入っていない学校
                 unprocessed = list(raw_schools - uploaded_schools)
                 
                 if unprocessed:
