@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import io
 import os
+import requests
 from datetime import datetime, timezone, timedelta
 
 # 日本時間（JST: UTC+9）の定義
@@ -26,7 +27,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 住所から判定する11地区定義（具体的な行政区・市町村名を登録）
+# 住所から判定する11地区定義
 AREA_RULES_ADDR = {
     "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
     "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
@@ -41,12 +42,25 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-# 個人情報・連絡先の完全除外リスト
 EXCLUDE_KEYS = [
     "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
     "ご連絡先（TEL）", "メールアドレス",
     "タイムスタンプ", "データの最終確認日"
 ]
+
+def record_login_to_gas(store_id, store_name, timestamp):
+    """Google Apps Scriptへログインログを自動送信（アクセスログ追記＋マスター更新）"""
+    log_api_url = st.secrets.get("LOG_API_URL")
+    if log_api_url:
+        try:
+            payload = {
+                "store_id": str(store_id).strip(),
+                "store_name": str(store_name).strip(),
+                "timestamp": str(timestamp)
+            }
+            requests.post(log_api_url, json=payload, timeout=3)
+        except Exception:
+            pass  # 通信エラー時もユーザー画面のログイン動作自体は阻害しない
 
 def get_area_by_address_only(address_text):
     """学校住所から所属地区を判定する。未判定は要確認。"""
@@ -245,21 +259,18 @@ try:
     df_master = pd.DataFrame()
     df_stores = pd.DataFrame()
 
-    # 1. 精査済み回答データ（アップロード用）
     if upload_url:
         try:
             df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
         except Exception:
             pass
 
-    # 2. 未精査生データ（アンケート集計）
     if raw_url:
         try:
             df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
         except Exception:
             pass
 
-    # 3. 送付先学校マスター（URL ➔ 失敗時ローカルCSV）
     if master_url:
         try:
             df_master = pd.read_csv(master_url).dropna(how='all').reset_index(drop=True)
@@ -273,7 +284,6 @@ try:
             except Exception:
                 pass
 
-    # 4. 店舗マスター（エラー詳細の判定付きロード処理）
     store_load_error = None
     if not store_url:
         store_load_error = "STORE_SPREADSHEET_URL が Secrets に設定されていません。"
@@ -288,7 +298,6 @@ try:
             store_load_error = f"URL読み込みエラー: {type(e).__name__}: {e}"
             df_stores = pd.DataFrame()
 
-    # URLから取得できない場合のみ、ローカルCSVを確認
     if df_stores.empty:
         local_store_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_店舗マスター.csv"
         if os.path.exists(local_store_file):
@@ -299,13 +308,11 @@ try:
             except Exception as e:
                 store_load_error = f"ローカルCSV読み込みエラー: {type(e).__name__}: {e}"
 
-    # 列名のトリミング処理
     if not df_master.empty:
         df_master.columns = [str(c).strip().lstrip("\ufeff") for c in df_master.columns]
     if not df_survey.empty:
         df_survey.columns = [str(c).strip().lstrip("\ufeff") for c in df_survey.columns]
 
-    # セッション状態の初期化
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
         st.session_state.store_info = None
@@ -321,6 +328,8 @@ try:
             
             if submit_btn:
                 cleaned_input = access_key_input.strip().upper()
+                now_jst = datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
+
                 if not df_stores.empty and "アクセスキー" in df_stores.columns:
                     df_stores["KEY_UPPER"] = df_stores["アクセスキー"].astype(str).str.strip().str.upper()
                     valid_store = df_stores[df_stores["KEY_UPPER"] == cleaned_input]
@@ -328,9 +337,14 @@ try:
                     if not valid_store.empty and pd.notna(cleaned_input) and cleaned_input != "":
                         st.session_state.authenticated = True
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
-                        
-                        now_jst = datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
                         st.session_state.store_info["最終ログイン日時"] = now_jst
+                        
+                        # GASを介してアクセスログの積載と回数更新を実行
+                        record_login_to_gas(
+                            st.session_state.store_info.get("店舗ID"),
+                            st.session_state.store_info.get("店舗名"),
+                            now_jst
+                        )
                         
                         st.success("認証に成功しました。")
                         st.rerun()
@@ -338,7 +352,8 @@ try:
                         st.error("アクセスキーが正しくないか、無効（脱退・未登録）です。組合事務局にお問い合わせください。")
                 elif cleaned_input in ["ADMIN123", "HV4F6HB", "Z001"]:
                     st.session_state.authenticated = True
-                    st.session_state.store_info = {"店舗ID": "Z001", "店舗名": "静岡県自転車組合 事務局", "地区": "本部", "アクセスキー": "HV4F6HB"}
+                    st.session_state.store_info = {"店舗ID": "Z001", "店舗名": "静岡県自転車組合 事務局", "地区": "本部", "アクセスキー": "HV4F6HB", "最終ログイン日時": now_jst}
+                    record_login_to_gas("Z001", "静岡県自転車組合 事務局", now_jst)
                     st.rerun()
                 else:
                     st.error("店舗マスターが読み込めていないか、アクセスキーが無効です。")
@@ -366,7 +381,6 @@ try:
     master_area_col = next((c for c in df_master.columns if str(c).strip() == "地区"), None) if not df_master.empty else None
 
     def get_master_area(row):
-        """マスター登録地区を最優先し、未登録の場合のみ住所から判定"""
         if master_area_col and pd.notna(row.get(master_area_col)):
             area = str(row[master_area_col]).strip()
             if area in AREA_RULES_ADDR:
@@ -418,7 +432,15 @@ try:
     if is_admin:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # 1. 事務局自身のアクセス履歴表示（nan補正付き）
+        # 年1回のアクセスキー更新案内メッセージ
+        st.warning(
+            "🔑 **【セキュリティ運用案内】**<br/>"
+            "セキュリティ維持のため、**年に1回（新年度開始時など）** アクセスキーの一括再発行・交換を推奨しています。<br/>"
+            "※再発行は Google スプレッドシートの Apps Script 内 `generateNewAccessKeys` を手動実行することで一括更新できます。",
+            icon="💡"
+        )
+        
+        # 1. 事務局自身のアクセス履歴表示（補正処理付き）
         if not df_stores.empty:
             z001_row = df_stores[
                 df_stores["店舗ID"].astype(str).str.upper().str.contains("Z001") | 
@@ -428,8 +450,8 @@ try:
                 z_cnt_raw = z001_row.iloc[0].get("ログイン回数", None)
                 z_time_raw = z001_row.iloc[0].get("最終ログイン日時", None)
                 
-                z_cnt = "0" if pd.isna(z_cnt_raw) or str(z_cnt_raw).lower() == "nan" else str(z_cnt_raw)
-                z_time = st.session_state.store_info.get("最終ログイン日時", "未ログイン") if pd.isna(z_time_raw) or str(z_time_raw).lower() == "nan" else str(z_time_raw)
+                z_cnt = "0" if pd.isna(z_cnt_raw) or str(z_cnt_raw).lower() in ["nan", "none", ""] else str(z_cnt_raw).replace(".0", "")
+                z_time = st.session_state.store_info.get("最終ログイン日時", "未ログイン") if pd.isna(z_time_raw) or str(z_time_raw).lower() in ["nan", "none", ""] else str(z_time_raw)
                 
                 st.caption(f"🏢 **事務局（Z001）アクセス履歴**: 累計ログイン回数 **{z_cnt} 回** ｜ 最終ログイン日時: **{z_time}**")
 
@@ -453,7 +475,7 @@ try:
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
 
-        # 3. 店舗アクセス状況ログ一覧（安全表示・エラー理由明示）
+        # 3. 店舗アクセス状況ログ一覧（None/NaNの全件補正表示）
         with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧", expanded=True):
             if df_stores.empty:
                 st.error("店舗マスターが空です。")
@@ -461,14 +483,31 @@ try:
                     st.code(store_load_error)
             else:
                 st.caption(f"店舗マスター読み込み成功：{len(df_stores)} 件")
-                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
-                missing_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c not in df_stores.columns]
+                
+                # 専門家指摘の None / NaN 自動補正処理
+                df_display_stores = df_stores.copy()
+                if "ログイン回数" in df_display_stores.columns:
+                    df_display_stores["ログイン回数"] = (
+                        pd.to_numeric(df_display_stores["ログイン回数"], errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                    )
+                if "最終ログイン日時" in df_display_stores.columns:
+                    df_display_stores["最終ログイン日時"] = (
+                        df_display_stores["最終ログイン日時"]
+                        .fillna("未ログイン")
+                        .astype(str)
+                        .replace({"nan": "未ログイン", "None": "未ログイン", "": "未ログイン"})
+                    )
+
+                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c in df_display_stores.columns]
+                missing_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c not in df_display_stores.columns]
                 
                 if missing_cols:
                     st.warning("店舗マスターに次の列が見つかりません：「" + "」、「".join(missing_cols) + "」")
                 
                 if show_cols:
-                    st.dataframe(df_stores[show_cols], use_container_width=True, hide_index=True)
+                    st.dataframe(df_display_stores[show_cols], use_container_width=True, hide_index=True)
                 else:
                     st.error("表示できる列がありません。店舗マスターの1行目が正しい列名になっているか確認してください。")
 
