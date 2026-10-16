@@ -4,7 +4,7 @@ import plotly.express as px
 import io
 from datetime import datetime, timezone, timedelta
 
-# 日本時間（JST: UTC+9）の定義（外部ライブラリ不要）
+# 日本時間（JST: UTC+9）の定義
 JST = timezone(timedelta(hours=9))
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
@@ -307,10 +307,11 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # ================= 事務局（Z001）専用 管理モード・精査漏れ警告 =================
+    # ================= 事務局（Z001）専用 管理モード・精査漏れ警告 ＆ 店舗ログイン監視 =================
     if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
+        # 精査漏れチェック
         if not df_raw.empty and not df_survey.empty:
             raw_school_col = next((c for c in df_raw.columns if "学校" in str(c)), None)
             uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
@@ -329,6 +330,15 @@ try:
                     )
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
+
+        # 店舗マスターのログインアクセス状況の監視エリア
+        with st.expander("📊 【事務局専用】全店舗のログイン・アクセス状況ログの確認"):
+            if not df_stores.empty:
+                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
+                st.dataframe(df_stores[show_cols], use_container_width=True)
+            else:
+                st.caption("店舗マスターのデータがありません。")
+
         st.markdown("---")
 
     # 138校マスターから「学校名 ➔ 住所」の参照マップを作成
