@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+import os
 from datetime import datetime, timezone, timedelta
 
 # 日本時間（JST: UTC+9）の定義
@@ -233,10 +234,10 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     buffer.seek(0)
     return buffer
 
-# --- データの読み込み＆メイン処理 ---
+# --- データの読み込み＆メイン処理（URL優先・失敗時ローカルファイル補正） ---
 try:
-    upload_url = st.secrets.get("SPREADSHEET_URL") # アップロード用シート（精査済み）
-    raw_url = st.secrets.get("RAW_SPREADSHEET_URL") # アンケート集計シート（生データ）
+    upload_url = st.secrets.get("SPREADSHEET_URL")
+    raw_url = st.secrets.get("RAW_SPREADSHEET_URL")
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
     store_url = st.secrets.get("STORE_SPREADSHEET_URL")
 
@@ -245,33 +246,49 @@ try:
     df_master = pd.DataFrame()
     df_stores = pd.DataFrame()
 
+    # 1. 精査済み回答データ（アップロード用）
     if upload_url:
         try:
             df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
-            df_survey.columns = [c.strip() for c in df_survey.columns]
-        except Exception:
-            pass
+        except Exception as e:
+            st.error(f"精査済みデータのURL読み込みエラー: {e}")
 
+    # 2. 未精査生データ（アンケート集計）
     if raw_url:
         try:
             df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
-            df_raw.columns = [c.strip() for c in df_raw.columns]
         except Exception:
             pass
 
+    # 3. 送付先学校マスター（URL ➔ 失敗時ローカルCSV）
     if master_url:
         try:
             df_master = pd.read_csv(master_url).dropna(how='all').reset_index(drop=True)
-            df_master.columns = [c.strip() for c in df_master.columns]
         except Exception:
             pass
+    if df_master.empty:
+        local_master_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_送付先学校一覧.csv"
+        if os.path.exists(local_master_file):
+            df_master = pd.read_csv(local_master_file).dropna(how='all').reset_index(drop=True)
 
+    # 4. 店舗マスター（URL ➔ 失敗時ローカルCSV）
     if store_url:
         try:
             df_stores = pd.read_csv(store_url).dropna(how='all').reset_index(drop=True)
-            df_stores.columns = [c.strip() for c in df_stores.columns]
-        except Exception:
-            pass
+        except Exception as e:
+            st.error(f"店舗マスターURL読み込みエラー: {e}")
+    if df_stores.empty:
+        local_store_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_店舗マスター.csv"
+        if os.path.exists(local_store_file):
+            df_stores = pd.read_csv(local_store_file).dropna(how='all').reset_index(drop=True)
+
+    # 列名のトリミング処理
+    if not df_master.empty:
+        df_master.columns = [c.strip() for c in df_master.columns]
+    if not df_stores.empty:
+        df_stores.columns = [c.strip() for c in df_stores.columns]
+    if not df_survey.empty:
+        df_survey.columns = [c.strip() for c in df_survey.columns]
 
     # セッション状態の初期化
     if "authenticated" not in st.session_state:
@@ -332,7 +349,6 @@ try:
     master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
     master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
 
-    # 正式な学校名をキーにした住所辞書を作成
     school_address_map = {}
     if master_school_col and master_addr_col:
         for _, row in df_master.iterrows():
@@ -341,28 +357,21 @@ try:
             if school_name and pd.notna(row[master_addr_col]) and address:
                 school_address_map[school_name] = address
 
-    # アンケート回答データの学校照合＆地区決定
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
-        # 1. 回答に住所があればそれを優先利用
         addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
         
-        # 2. 住所がなければ送付先マスター（138校）から照合して取得
         if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
             s_name = normalize_school_name(row[survey_school_col])
-            
-            # 完全一致を優先
             if s_name in school_address_map:
                 addr_text = school_address_map[s_name]
             else:
-                # 複数マッチ時の誤判別防止のため部分一致候補を検索
                 matches = [m_addr for m_name, m_addr in school_address_map.items() if s_name in m_name or m_name in s_name]
                 if len(matches) == 1:
                     addr_text = matches[0]
                 else:
-                    # 複数該当または不一致の場合は「要確認」扱い
                     return "要確認"
 
         return get_area_by_address_only(addr_text)
@@ -375,7 +384,7 @@ try:
     if is_admin:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # 1. 事務局自身のアクセス履歴表示
+        # 1. 事務局自身のログイン情報・回数表示
         if not df_stores.empty:
             z001_row = df_stores[df_stores["店舗ID"].astype(str).str.contains("Z001") | df_stores["アクセスキー"].astype(str).str.contains("HV4F6HB")]
             if not z001_row.empty:
@@ -403,7 +412,7 @@ try:
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
 
-        # 3. 全店舗のアクセス状況ログ一覧（セキュリティ向上・アクセスキー非表示・エラー詳細対応）
+        # 3. 店舗アクセス状況ログ一覧（アクセスキー非表示・エラー詳細表示）
         with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧", expanded=True):
             if df_stores.empty:
                 st.error("店舗マスターを読み込めていません。STORE_SPREADSHEET_URL とCSVの公開・共有設定を確認してください。")
@@ -422,7 +431,7 @@ try:
 
         st.markdown("---")
 
-    # サイドバー絞り込み（「要確認」をリストに追加）
+    # サイドバー絞り込み
     st.sidebar.header("🔍 絞り込み検索")
     area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["要確認", "その他"]
     default_index = 0
@@ -533,7 +542,7 @@ try:
             )
             df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
             
-            if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
+            if selected_area not in [" continental", "すべての地区（全県）", "要確認", "その他"]:
                 df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
