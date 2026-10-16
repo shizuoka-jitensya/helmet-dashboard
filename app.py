@@ -340,11 +340,9 @@ try:
 
         # 3. 🚨 ログイン回数 10回以上の不正アクセス監視警告
         if not df_stores.empty and "ログイン回数" in df_stores.columns:
-            # ログイン回数を数値化
             df_stores_temp = df_stores.copy()
             df_stores_temp["回数_num"] = pd.to_numeric(df_stores_temp["ログイン回数"], errors='coerce').fillna(0)
             
-            # 10回以上の店舗をフィルタリング
             over_10_stores = df_stores_temp[df_stores_temp["回数_num"] >= 10]
             
             if not over_10_stores.empty:
@@ -355,13 +353,13 @@ try:
                 )
                 st.write("▼ **10回以上ログインしている店舗リスト:**")
                 show_warn_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in over_10_stores.columns]
-                st.dataframe(over_10_stores[show_warn_cols], use_container_width=True)
+                st.dataframe(over_10_stores[show_warn_cols].astype(str), use_container_width=True)
 
-        # 4. 全店舗のアクセス状況ログ一覧（折りたたみ）
+        # 4. 全店舗のアクセス状況ログ一覧（PyArrowエラー回避のため全列文字列化）
         with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧"):
             if not df_stores.empty:
                 show_cols = [c for c in ["店舗ID", "店舗名", "地区", "アクセスキー", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
-                st.dataframe(df_stores[show_cols], use_container_width=True)
+                st.dataframe(df_stores[show_cols].fillna("").astype(str), use_container_width=True)
 
         st.markdown("---")
 
@@ -478,7 +476,7 @@ try:
                     display_items.append((k, v))
             
             detail_df = pd.DataFrame(display_items, columns=["項目・設問", "回答内容"])
-            st.dataframe(detail_df, use_container_width=True)
+            st.dataframe(detail_df.fillna("").astype(str), use_container_width=True)
         else:
             st.info("該当する学校の回答データがありません。")
 
@@ -510,7 +508,7 @@ try:
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
             show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号", "メールアドレス / 連絡先状況"] if c in df_unanswered.columns]
-            st.dataframe(df_unanswered[show_cols], use_container_width=True)
+            st.dataframe(df_unanswered[show_cols].fillna("").astype(str), use_container_width=True)
         else:
             st.info("💡 送付先マスターが連携されると、未回答校リストが自動表示されます。")
 
