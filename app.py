@@ -2,10 +2,18 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+
+# ReportLab関連ライブラリ（日本語フォント設定追加）
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+# 日本語CIDフォントの登録（ReportLab標準組み込み）
+JAPANESE_FONT = 'HeiseiKakuGo-W5'
+pdfmetrics.registerFont(UnicodeCIDFont(JAPANESE_FONT))
 
 st.set_page_config(
     page_title="【組合員専用】静岡県内高校 自転車通学・ヘルメットアンケート閲覧システム",
@@ -37,7 +45,7 @@ def get_area_from_text(text):
                 return area
     return "その他"
 
-# --- PDF生成機能（A4サイズ1枚に収めるレイアウト） ---
+# --- PDF生成機能（日本語フォント完全対応・A4 1枚レイアウト） ---
 def generate_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -47,9 +55,15 @@ def generate_pdf(school_data):
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=15, leading=18, alignment=1)
-    body_style = ParagraphStyle('BodyStyle', parent=styles['Normal'], fontSize=8, leading=11)
-    header_style = ParagraphStyle('HeaderStyle', parent=styles['Normal'], fontSize=8, leading=11, textColor=colors.whitesmoke)
+    title_style = ParagraphStyle(
+        'JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=14, leading=18, alignment=1
+    )
+    body_style = ParagraphStyle(
+        'JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11
+    )
+    header_style = ParagraphStyle(
+        'JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11, textColor=colors.whitesmoke
+    )
 
     school_name = str(school_data.get('学校名', '高校アンケート回答'))
     story.append(Paragraph(f"🚲 静岡県内高校 自転車通学・ヘルメット着用状況 回答シート", title_style))
@@ -67,7 +81,7 @@ def generate_pdf(school_data):
         a_text = Paragraph(str(val), body_style)
         table_data.append([q_text, a_text])
 
-    t = Table(table_data, colWidths=[180, 340])
+    t = Table(table_data, colWidths=[190, 330])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
@@ -82,7 +96,7 @@ def generate_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- データの安全な取得（404保護付き） ---
+# --- データの安全な取得 ---
 try:
     csv_url = st.secrets.get("SPREADSHEET_URL")
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
@@ -116,26 +130,30 @@ try:
         st.session_state.authenticated = False
         st.session_state.store_info = None
 
-    # --- 1. ログイン認証画面 ---
+    # --- 1. ログイン認証画面（大文字・小文字を問わず照合） ---
     if not st.session_state.authenticated:
         st.title("🔒 自転車組合 組合員専用閲覧システム")
         st.caption("※当システムの情報は組合事務局集計によるものであり、組合外部・一般には非公表です。")
         
         with st.form("login_form"):
-            access_key_input = st.text_input("アクセスキーを入力してください", type="password")
+            access_key_input = st.text_input("アクセスキーを入力してください（大文字・小文字どちらでも可）", type="password")
             submit_btn = st.form_submit_button("ログイン")
             
             if submit_btn:
+                cleaned_input = access_key_input.strip().upper()  # 入力を大文字に統一
                 if not df_stores.empty and "アクセスキー" in df_stores.columns:
-                    valid_store = df_stores[df_stores["アクセスキー"].astype(str).str.strip() == access_key_input.strip()]
-                    if not valid_store.empty and pd.notna(access_key_input.strip()):
+                    # マスター側のキーも大文字に統一して判定
+                    df_stores["KEY_UPPER"] = df_stores["アクセスキー"].astype(str).str.strip().str.upper()
+                    valid_store = df_stores[df_stores["KEY_UPPER"] == cleaned_input]
+                    
+                    if not valid_store.empty and pd.notna(cleaned_input) and cleaned_input != "":
                         st.session_state.authenticated = True
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
                         st.success("認証に成功しました。")
                         st.rerun()
                     else:
                         st.error("アクセスキーが正しくないか、無効（脱退・未登録）です。組合事務局にお問い合わせください。")
-                elif access_key_input == "admin123":  # 事務局管理者用
+                elif cleaned_input == "ADMIN123":  # 事務局管理者用
                     st.session_state.authenticated = True
                     st.session_state.store_info = {"店舗名": "組合事務局", "地区": "全県"}
                     st.rerun()
@@ -157,7 +175,7 @@ try:
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
     # 地区の自動判定付与（アンケートデータ）
-    survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or df_survey.columns[1] if not df_survey.empty else None
+    survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area(row):
@@ -168,7 +186,7 @@ try:
             area = get_area_from_text(school_text)
         return area
 
-    if not df_survey.empty:
+    if not df_survey.empty and survey_school_col:
         df_survey["地区"] = df_survey.apply(judge_survey_area, axis=1)
 
     # サイドバー：自地区優先の絞り込み
@@ -183,10 +201,10 @@ try:
 
     # フィルタリング
     filtered_survey = df_survey.copy()
-    if not filtered_survey.empty:
+    if not filtered_survey.empty and survey_school_col:
         if selected_area != "すべての地区（全県）":
             filtered_survey = filtered_survey[filtered_survey["地区"] == selected_area]
-        if search_keyword and survey_school_col:
+        if search_keyword:
             filtered_survey = filtered_survey[filtered_survey[survey_school_col].astype(str).str.contains(search_keyword, na=False)]
 
     # 上部サマリーカード
