@@ -25,16 +25,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# 住所（市町名・行政区）のみに基づく11地区定義
+# 住所から判定する11地区定義（具体的な行政区・市町村名を登録）
 AREA_RULES_ADDR = {
     "賀茂": ["下田市", "東伊豆町", "河津町", "南伊豆町", "松崎町", "西伊豆町", "賀茂郡"],
     "田方": ["熱海市", "伊東市", "三島市", "伊豆市", "伊豆の国市", "函南町", "田方郡"],
     "沼駿": ["沼津市", "御殿場市", "裾野市", "清水町", "長泉町", "小山町", "駿東郡"],
     "富士": ["富士市", "富士宮市"],
-    "清庵": ["清水区"],
-    "静岡": ["葵区", "駿河区"],
+    "清庵": ["静岡市清水区", "清水区"],
+    "静岡": ["静岡市葵区", "静岡市駿河区", "葵区", "駿河区"],
     "志太": ["焼津市", "藤枝市"],
-    "榛原": ["島田市", "牧之原市", "吉田町", "川根町", "榛原郡"],
+    "榛原": ["島田市", "牧之原市", "吉田町", "川根本町", "川根町", "榛原郡"],
     "小笠": ["掛川市", "菊川市", "御前崎市"],
     "磐周": ["磐田市", "袋井市", "森町", "周智郡"],
     "西遠": ["浜松市", "湖西市"]
@@ -48,14 +48,33 @@ EXCLUDE_KEYS = [
 ]
 
 def get_area_by_address_only(address_text):
-    """住所文字列のみから11地区を厳密に判定"""
-    if not isinstance(address_text, str) or not address_text or address_text == "nan":
-        return "その他"
-    for area, keywords in AREA_RULES_ADDR.items():
-        for kw in keywords:
-            if kw in address_text:
-                return area
-    return "その他"
+    """学校住所から所属地区を判定する。未判定は要確認。"""
+    if pd.isna(address_text):
+        return "要確認"
+    address = str(address_text).strip()
+    if not address or address.lower() in {"nan", "none"}:
+        return "要確認"
+    
+    # より具体的な住所キーワード（文字数が長いもの）を先に判定
+    all_rules = [
+        (keyword, area)
+        for area, keywords in AREA_RULES_ADDR.items()
+        for keyword in keywords
+    ]
+    all_rules.sort(key=lambda item: len(item[0]), reverse=True)
+    
+    for keyword, area in all_rules:
+        if keyword in address:
+            return area
+    return "要確認"
+
+def normalize_school_name(value):
+    """学校名の前後の空白やスペースを除去して正規化"""
+    if pd.isna(value):
+        return ""
+    name = str(value).strip()
+    name = name.replace(" ", "").replace(" ", "")
+    return name
 
 # --- 1. 個別学校 回答PDF生成機能 ---
 def generate_school_pdf(school_data):
@@ -309,49 +328,54 @@ try:
     st.title("🚲 静岡県内高校 自転車通学・ヘルメット着用状況ダッシュボード")
     st.caption("【組合員限定閲覧】（一般非公開情報）")
 
-    # ================= 1. 送付先マスター（138校）から「学校名 ➔ 住所」辞書を確実作成 =================
-    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), "学校名")
-    master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), "住所")
-    
+    # ================= 学校名と住所の照合・地区判定 =================
+    master_school_col = next((c for c in df_master.columns if "学校" in str(c)), None) if not df_master.empty else None
+    master_addr_col = next((c for c in df_master.columns if "住所" in str(c)), None) if not df_master.empty else None
+
+    # 正式な学校名をキーにした住所辞書を作成
     school_address_map = {}
-    if not df_master.empty and master_school_col in df_master.columns and master_addr_col in df_master.columns:
-        for _, r in df_master.iterrows():
-            s_name = str(r[master_school_col]).strip()
-            s_addr = str(r[master_addr_col]).strip()
-            if s_name and s_addr:
-                school_address_map[s_name] = s_addr
+    if master_school_col and master_addr_col:
+        for _, row in df_master.iterrows():
+            school_name = normalize_school_name(row[master_school_col])
+            address = str(row[master_addr_col]).strip()
+            if school_name and pd.notna(row[master_addr_col]) and address:
+                school_address_map[school_name] = address
 
-    # ================= 2. アンケート回答データの地区判定（マスターの住所から一括決定） =================
+    # アンケート回答データの学校照合＆地区決定
     survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
+    survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
-    def force_judge_area(row):
-        if not survey_school_col or pd.isna(row[survey_school_col]):
-            return "その他"
+    def judge_survey_area_by_address(row):
+        # 1. 回答に住所があればそれを優先利用
+        addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
         
-        s_name = str(row[survey_school_col]).strip()
-        matched_addr = ""
-        
-        # 1. 送付先マスターとの完全一致検索
-        if s_name in school_address_map:
-            matched_addr = school_address_map[s_name]
-        else:
-            # 2. あいまい・部分一致検索
-            for m_name, m_addr in school_address_map.items():
-                if s_name in m_name or m_name in s_name:
-                    matched_addr = m_addr
-                    break
-        
-        # 3. 拾い上げた住所から11地区を一発判定
-        return get_area_by_address_only(matched_addr)
+        # 2. 住所がなければ送付先マスター（138校）から照合して取得
+        if not addr_text and survey_school_col and pd.notna(row[survey_school_col]):
+            s_name = normalize_school_name(row[survey_school_col])
+            
+            # 完全一致を優先
+            if s_name in school_address_map:
+                addr_text = school_address_map[s_name]
+            else:
+                # 複数マッチ時の誤判別防止のため部分一致候補を検索
+                matches = [m_addr for m_name, m_addr in school_address_map.items() if s_name in m_name or m_name in s_name]
+                if len(matches) == 1:
+                    addr_text = matches[0]
+                else:
+                    # 複数該当または不一致の場合は「要確認」扱い
+                    return "要確認"
+
+        return get_area_by_address_only(addr_text)
 
     if not df_survey.empty and survey_school_col:
-        df_survey["地区"] = df_survey.apply(force_judge_area, axis=1)
+        df_survey["地区"] = df_survey.apply(judge_survey_area_by_address, axis=1)
 
     # ================= 事務局（Z001）専用 管理モード・警告 ＆ セキュリティ監視 =================
-    if store_id == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]:
+    is_admin = store_id.upper() == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]
+    if is_admin:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
         
-        # 1. 事務局自身のログイン情報・回数表示
+        # 1. 事務局自身のアクセス履歴表示
         if not df_stores.empty:
             z001_row = df_stores[df_stores["店舗ID"].astype(str).str.contains("Z001") | df_stores["アクセスキー"].astype(str).str.contains("HV4F6HB")]
             if not z001_row.empty:
@@ -379,16 +403,28 @@ try:
                 else:
                     st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
 
-        # 3. 全店舗のアクセス状況ログ一覧（シンプルな全件表示）
-        with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧"):
-            if not df_stores.empty:
-                st.dataframe(df_stores, use_container_width=True)
+        # 3. 全店舗のアクセス状況ログ一覧（セキュリティ向上・アクセスキー非表示・エラー詳細対応）
+        with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧", expanded=True):
+            if df_stores.empty:
+                st.error("店舗マスターを読み込めていません。STORE_SPREADSHEET_URL とCSVの公開・共有設定を確認してください。")
+            else:
+                st.caption(f"店舗マスター読み込み件数：{len(df_stores)} 件")
+                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c in df_stores.columns]
+                missing_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c not in df_stores.columns]
+                
+                if missing_cols:
+                    st.warning("店舗マスターに次の列が見つかりません：「" + "」、「".join(missing_cols) + "」")
+                
+                if show_cols:
+                    st.dataframe(df_stores[show_cols], use_container_width=True, hide_index=True)
+                else:
+                    st.error("表示できる列がありません。店舗マスターの1行目が正しい列名になっているか確認してください。")
 
         st.markdown("---")
 
-    # サイドバー絞り込み
+    # サイドバー絞り込み（「要確認」をリストに追加）
     st.sidebar.header("🔍 絞り込み検索")
-    area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["その他"]
+    area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["要確認", "その他"]
     default_index = 0
     if store.get("地区") in AREA_RULES_ADDR:
         default_index = area_list.index(store.get("地区"))
@@ -429,7 +465,7 @@ try:
         st.subheader("📄 PDF印刷・出力（個別の学校 ＆ FAX用地区別2枚まとめ）")
         
         # 1. 地区別まとめFAX PDFダウンロード
-        if selected_area != "すべての地区（全県）" and not filtered_survey.empty:
+        if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
             st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区集計・一覧2枚まとめPDF")
             st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横）")
             
@@ -463,8 +499,8 @@ try:
                 mime="application/pdf"
             )
             
-            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', 'その他')}地区）")
-            display_items = [("所属地区（住所より判定）", f"{school_data.get('地区', 'その他')}地区")]
+            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', '要確認')}地区）")
+            display_items = [("所属地区（住所より判定）", f"{school_data.get('地区', '要確認')}地区")]
             for k, v in school_data.items():
                 if k != "地区" and not any(ex in str(k) for ex in EXCLUDE_KEYS):
                     display_items.append((k, v))
@@ -482,7 +518,7 @@ try:
             if selected_q:
                 q_counts = filtered_survey[selected_q].value_counts().reset_index()
                 q_counts.columns = ["回答内容", "校数"]
-                fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【设問集計】{selected_q}", hole=0.4)
+                fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
                 st.plotly_chart(fig_q, use_container_width=True)
 
     with tab3:
@@ -497,7 +533,7 @@ try:
             )
             df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
             
-            if selected_area != "すべての地区（全県）":
+            if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
                 df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
