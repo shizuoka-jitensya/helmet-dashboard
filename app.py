@@ -176,7 +176,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別一覧PDF生成機能（サマリーなし A4横 1枚化） ---
+# --- 2. FAX用 地区別一覧PDF生成機能（A4横） ---
 def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
@@ -190,7 +190,6 @@ def generate_district_fax_pdf(area_name, district_df):
     story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表</b>", title_style))
     story.append(Spacer(1, 6))
 
-    # 一覧表のヘッダー構築
     matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS[:15]]
     matrix_data = [matrix_hdr]
 
@@ -209,7 +208,6 @@ def generate_district_fax_pdf(area_name, district_df):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    # 全16列の幅調整 (合計790pt)
     col_w = [70] + [48] * 15
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
@@ -341,7 +339,16 @@ try:
                     school_address_map[school_name] = address
                 school_area_map[school_name] = area
 
-    survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[2] if not df_survey.empty else None)
+    # 確実な学校名カラムの判定
+    survey_school_col = None
+    if not df_survey.empty:
+        for c in df_survey.columns:
+            if "学校名" in str(c) or "学校" in str(c):
+                survey_school_col = c
+                break
+        if not survey_school_col and len(df_survey.columns) > 2:
+            survey_school_col = df_survey.columns[2]
+
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
@@ -470,23 +477,4 @@ try:
                 if selected_q:
                     q_counts = filtered_survey[selected_q].value_counts().reset_index()
                     q_counts.columns = ["回答内容", "校数"]
-                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
-                    st.plotly_chart(fig_q, use_container_width=True)
-
-    with tab3:
-        st.subheader("⚠️ 未回答校の進捗管理")
-        if not df_master.empty and master_school_col:
-            answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist() if not df_survey.empty and survey_school_col else []
-            df_master["回答ステータス"] = df_master[master_school_col].apply(
-                lambda x: "回答済み" if any(ans in str(x) or str(x) in ans for ans in answered_schools) else "未回答"
-            )
-            df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
-            if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
-                df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
-
-            st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
-            show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号"] if c in df_unanswered.columns]
-            st.dataframe(df_unanswered[show_cols], use_container_width=True)
-
-except Exception as e:
-    st.error(f"システムエラーが発生しました: {e}")
+                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f
