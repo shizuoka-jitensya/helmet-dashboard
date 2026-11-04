@@ -176,7 +176,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別一覧PDF生成機能（A4横） ---
+# --- 2. FAX用 地区別一覧PDF生成機能（A4横 1枚） ---
 def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
@@ -477,4 +477,5 @@ try:
                 if selected_q:
                     q_counts = filtered_survey[selected_q].value_counts().reset_index()
                     q_counts.columns = ["回答内容", "校数"]
-                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f
+                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
+                    st.plotly_chart(fig_q, use_container_width=True)
