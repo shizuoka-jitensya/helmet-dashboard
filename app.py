@@ -43,24 +43,40 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-EXCLUDE_KEYS = [
-    "ご回答者様のお名前（役職・氏名）", "役職", "役職２",
-    "ご連絡先（TEL）", "メールアドレス",
-    "タイムスタンプ", "データの最終確認日"
+# 22項目の精査済み表示用カラム定義
+DISPLAY_COLS = [
+    ("自転車通学の許可", "許可"),
+    ("自転車通学者数", "通学者数"),
+    ("自転車通学許可基準の有無", "許可基準"),
+    ("点検証明の有無", "点検証明"),
+    ("点検を行う自転車店の指定", "店指定"),
+    ("色の指定", "車体色"),
+    ("ハンドルの形状", "ハンドル"),
+    ("スタンドの仕様", "スタンド"),
+    ("荷台（キャリア）についてのルール", "荷台"),
+    ("鍵の数", "鍵数"),
+    ("スポーツ・小径・折り畳み自転車について", "車種制限"),
+    ("電動アシストについて", "電動アシスト"),
+    ("新１年生の点検時期", "1年点検"),
+    ("新２年生の点検時期", "2年点検"),
+    ("新３年生の点検時期", "3年点検"),
+    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "ヘルメット義務化"),
+    ("特定の製品モデルのヘルメット指定", "ヘルメット指定"),
+    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "ヘルメット不足対応"),
+    ("自転車保険・TSマークについて", "保険・TSマーク"),
+    ("その他", "その他・特記事項")
 ]
 
 # --------------------------------------------------
-# ⚡ ログイン高速化：GASログ送信の非同期処理（裏側で送信）
+# ⚡ GASログ送信の非同期処理
 # --------------------------------------------------
 def _send_log_async(log_api_url, payload):
-    """裏側でGASへログを送信（画面を一切待たせない）"""
     try:
         requests.post(log_api_url, json=payload, timeout=5)
     except Exception:
         pass
 
 def record_login_to_gas(store_id, store_name, timestamp):
-    """Google Apps Scriptへアクセスログを非同期送信"""
     log_api_url = st.secrets.get("LOG_API_URL")
     if log_api_url:
         payload = {
@@ -72,11 +88,10 @@ def record_login_to_gas(store_id, store_name, timestamp):
         thread.start()
 
 # --------------------------------------------------
-# ⚡ 高速化：スプレッドシートデータのキャッシュ（5分間保持）
+# ⚡ CSVキャッシュ読み込み（5分間保持）
 # --------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def load_csv_data(url):
-    """URLからCSVを取得してキャッシュする"""
     if not url:
         return pd.DataFrame()
     try:
@@ -87,7 +102,6 @@ def load_csv_data(url):
         return pd.DataFrame()
 
 def get_area_by_address_only(address_text):
-    """学校住所から所属地区を判定する。未判定は要確認。"""
     if pd.isna(address_text):
         return "要確認"
     address = str(address_text).strip()
@@ -107,54 +121,54 @@ def get_area_by_address_only(address_text):
     return "要確認"
 
 def normalize_school_name(value):
-    """学校名の前後の空白、全角・半角スペースを除去して正規化"""
     if pd.isna(value):
         return ""
     name = str(value).strip()
-    name = name.replace(" ", "").replace(" ", "")
-    return name
+    return name.replace(" ", "").replace(" ", "")
 
-# --- 1. 個別学校 回答PDF生成機能 ---
+# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
+        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
     )
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=14, leading=18, alignment=1)
-    sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=11, leading=15, alignment=1)
-    body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11)
-    header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11, textColor=colors.whitesmoke)
+    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=13, leading=16, alignment=1)
+    sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=10, leading=13, alignment=1)
+    body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=10.5)
+    header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.5, leading=11, textColor=colors.whitesmoke, alignment=1)
 
     school_name = str(school_data.get('学校名', '高校アンケート回答'))
     area_name = str(school_data.get('地区', 'その他'))
     
     story.append(Paragraph(f"🚲 静岡県内高校 自転車通学・ヘルメット着用状況 回答シート", title_style))
     story.append(Spacer(1, 4))
-    story.append(Paragraph(f"<b>【学校名】 {school_name} （地区：{area_name}地区）</b>", sub_style))
-    story.append(Spacer(1, 8))
+    story.append(Paragraph(f"<b>【学校名】 {school_name} （所属地区：{area_name}地区）</b>", sub_style))
+    story.append(Spacer(1, 6))
 
-    table_data = [[Paragraph("<b>項目 / 設問</b>", header_style), Paragraph("<b>回答内容</b>", header_style)]]
-    table_data.append([Paragraph("所属地区（住所より自動判定）", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
+    table_data = [[Paragraph("<b>調査項目</b>", header_style), Paragraph("<b>学校の回答内容</b>", header_style)]]
+    table_data.append([Paragraph("所属地区", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
 
-    for key, val in school_data.items():
-        if key == "地区" or any(ex in str(key) for ex in EXCLUDE_KEYS) or pd.isna(val):
-            continue
-        q_text = Paragraph(str(key), body_style)
-        a_text = Paragraph(str(val), body_style)
-        table_data.append([q_text, a_text])
+    for full_col, short_label in DISPLAY_COLS:
+        val = school_data.get(full_col, None)
+        if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
+            matching_col = next((c for c in school_data.keys() if short_label in str(c) or full_col[:5] in str(c)), None)
+            val = school_data.get(matching_col, "-") if matching_col else "-"
 
-    t = Table(table_data, colWidths=[190, 330])
+        val_str = str(val).strip()
+        table_data.append([Paragraph(f"<b>{short_label}</b><br/><font size=6.5 color='#555555'>{full_col[:18]}</font>", body_style), Paragraph(val_str, body_style)])
+
+    t = Table(table_data, colWidths=[170, 365])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 3),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.4, colors.grey),
+        ('TOPPADDING', (0,0), (-1,-1), 2.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
     ]))
     
     story.append(t)
@@ -162,48 +176,46 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別2枚まとめPDF生成機能 ---
+# --- 2. FAX用 地区別2枚まとめPDF生成機能（A4横） ---
 def generate_district_fax_pdf(area_name, district_df, total_master_count):
     buffer = io.BytesIO()
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=14, leading=18, alignment=1)
-    subtitle_style = ParagraphStyle('D_SubTitle', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=10, leading=14, alignment=1)
-    body_style = ParagraphStyle('D_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.5, leading=12)
-    hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
-    cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6.5, leading=8.5)
+    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=13, leading=16, alignment=1)
+    subtitle_style = ParagraphStyle('D_SubTitle', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=9.5, leading=13, alignment=1)
+    body_style = ParagraphStyle('D_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11)
+    hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.5, textColor=colors.whitesmoke, alignment=1)
+    cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6, leading=7.5)
     
     story = []
 
-    doc_p1 = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    
+    # 1枚目: サマリー
     story.append(Paragraph(f"🚲 【組合員限定・非公表】 {area_name}地区 高校自転車通学・ヘルメット着用状況", title_style))
     story.append(Paragraph(f"（FAX送信用 地区集計サマリー）", subtitle_style))
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 10))
 
     ans_count = len(district_df)
     rate_str = f"{int((ans_count/total_master_count)*100)}%" if total_master_count > 0 else "-"
-    summary_text = f"<b>■ {area_name}地区の回答状況</b><br/>" \
-                   f"・地区内対象高校数：{total_master_count} 校<br/>" \
-                   f"・回答済み高校数 ：{ans_count} 校（回答率: {rate_str}）<br/>"
+    summary_text = f"<b>■ {area_name}地区 回答集計状況</b><br/>" \
+                   f"・地区内対象高校数：{total_master_count} 校 ｜ " \
+                   f"・回答済み高校数：{ans_count} 校（回答率: {rate_str}）<br/>"
     story.append(Paragraph(summary_text, body_style))
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 10))
 
-    story.append(Paragraph("<b>■ 主要設問の地区内回答傾向</b>", body_style))
-    story.append(Spacer(1, 5))
+    story.append(Paragraph("<b>■ 主要設問の地区内回答傾向サマリー</b>", body_style))
+    story.append(Spacer(1, 4))
 
-    summary_table_data = [[Paragraph("<b>集計設問</b>", hdr_style), Paragraph("<b>地区内での主な傾向・回答内訳</b>", hdr_style)]]
+    summary_table_data = [[Paragraph("<b>集計項目</b>", hdr_style), Paragraph("<b>地区内での主な傾向・回答内訳</b>", hdr_style)]]
     
-    key_qs = [
-        ("Q1. 自転車通学の許可", "Q1"),
-        ("Q3. 通学許可基準の有無", "Q3"),
-        ("Q5. 点検自転車店の指定", "Q5"),
-        ("Q18-1. ヘルメット義務化への対応", "Q18-1"),
-        ("Q19. TSマーク・保険の扱い", "Q19")
+    key_summary_items = [
+        ("自転車通学の許可", ["自転車通学の許可", "許可"]),
+        ("点検証明・店指定", ["点検を行う自転車店の指定", "点検証明の有無"]),
+        ("ヘルメット義務化の予定", ["ヘルメット", "令和9年度"]),
+        ("TSマーク・保険の扱い", ["自転車保険", "保険"])
     ]
 
-    for label, q_code in key_qs:
-        matching_col = next((c for c in district_df.columns if q_code in c), None)
+    for label, keywords in key_summary_items:
+        matching_col = next((c for c in district_df.columns if any(k in str(c) for k in keywords)), None)
         if matching_col and not district_df.empty:
             vc = district_df[matching_col].value_counts()
             trend_str = " / ".join([f"{k}: {v}校" for k, v in vc.items()])
@@ -211,97 +223,82 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
             trend_str = "回答データなし"
         summary_table_data.append([Paragraph(label, body_style), Paragraph(trend_str, body_style)])
 
-    st_table = Table(summary_table_data, colWidths=[180, 340])
+    st_table = Table(summary_table_data, colWidths=[160, 360])
     st_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
     story.append(st_table)
     
     story.append(PageBreak())
 
-    target_q_codes = [
-        ("学校名", "学校"), ("地区", "地区"), ("Q1", "Q1."), ("Q2", "Q2."), ("Q3", "Q3."),
-        ("Q10", "Q10."), ("Q11", "Q11."), ("Q12", "Q12."), ("Q13", "Q13."),
-        ("Q14", "Q14."), ("Q16", "Q16."), ("Q18-1", "Q18-1"), ("Q18-2", "Q18-2"),
-        ("Q18-3", "Q18-3"), ("Q19", "Q19")
-    ]
+    # 2枚目: 一覧マトリクス
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧</b>", title_style))
+    story.append(Spacer(1, 6))
 
-    matrix_hdr = [Paragraph(f"<b>{title}</b>", hdr_style) for title, _ in target_q_codes]
+    matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS[:15]]
     matrix_data = [matrix_hdr]
 
     for _, row in district_df.iterrows():
-        row_cells = []
-        for title, code in target_q_codes:
-            if title == "地区":
-                val = str(row.get("地区", "その他"))
-            else:
-                col_name = next((c for c in district_df.columns if code in c), None)
-                val = str(row[col_name]) if col_name and pd.notna(row[col_name]) else "-"
+        row_cells = [Paragraph(str(row.get("学校名", "-"))[:10], cell_style)]
+        for full_col, short_name in DISPLAY_COLS[:15]:
+            val = row.get(full_col, None)
+            if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
+                matching_col = next((c for c in district_df.columns if short_name in str(c)), None)
+                val = row.get(matching_col, "-") if matching_col else "-"
             
-            val_short = val.replace("（「自転車安全整備店の章」を有する自転車店）", "")\
-                           .replace("変形ハンドルは一切禁止（極端なアップハンドル、カマキリ型、ドロップハンドルなど）", "変形禁止")\
-                           .replace("両立スタンド（Wスタンド）を推奨もしくは、望ましい", "Wスタンド推奨")\
-                           .replace("二重施錠（Wロック／ツーロック）を義務付けている", "二重施錠義務")
-            
+            val_short = str(val).replace("（「自転車安全整備店の章」を有する自転車店）", "")\
+                               .replace("変形ハンドルは一切禁止（極端なアップハンドル、カマキリ型、ドロップハンドルなど）", "変形禁止")\
+                               .replace("両立スタンド（Wスタンド）を推奨もしくは、望ましい", "Wスタンド推奨")\
+                               .replace("二重施錠（Wロック／ツーロック）を義務付けている", "二重施錠義務")
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    col_w = [75, 45] + [52] * 13
+    col_w = [70] + [48] * 15
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 2),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-        ('LEFTPADDING', (0,0), (-1,-1), 2),
-        ('RIGHTPADDING', (0,0), (-1,-1), 2),
+        ('TOPPADDING', (0,0), (-1,-1), 1.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.5),
+        ('LEFTPADDING', (0,0), (-1,-1), 1.5),
+        ('RIGHTPADDING', (0,0), (-1,-1), 1.5),
     ]))
 
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧（13項目）</b>", title_style))
-    story.append(Spacer(1, 8))
     story.append(m_table)
 
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=15, leftMargin=15, topMargin=15, bottomMargin=15)
     doc.build(story)
     buffer.seek(0)
     return buffer
 
-# --- データの高速読み込み処理 ---
+# --- データの読み込み＆メイン処理 ---
 try:
     upload_url = st.secrets.get("SPREADSHEET_URL")
     raw_url = st.secrets.get("RAW_SPREADSHEET_URL")
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
     store_url = st.secrets.get("STORE_SPREADSHEET_URL")
 
-    # キャッシュを活用して高速ロード
+    # キャッシュ読み込み
     df_survey = load_csv_data(upload_url)
     df_raw = load_csv_data(raw_url)
     df_master = load_csv_data(master_url)
     df_stores = load_csv_data(store_url)
 
-    if df_master.empty:
-        local_master_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_送付先学校一覧.csv"
-        if os.path.exists(local_master_file):
-            try:
-                df_master = pd.read_csv(local_master_file).dropna(how='all').reset_index(drop=True)
-            except Exception:
-                pass
+    # 組合員向け集計シート の ローカルファイルからのフォールバック対応
+    if df_survey.empty:
+        local_base = "組合員向け集計シート_作業用_地区別ベース_修正済み.csv"
+        if os.path.exists(local_base):
+            df_survey = pd.read_csv(local_base).dropna(how='all').reset_index(drop=True)
 
-    store_load_error = None
-    if df_stores.empty:
-        local_store_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_店舗マスター.csv"
-        if os.path.exists(local_store_file):
-            try:
-                df_stores = pd.read_csv(local_store_file).dropna(how="all")
-                df_stores.columns = [str(c).strip().lstrip("\ufeff") for c in df_stores.columns]
-                df_stores = df_stores.reset_index(drop=True)
-            except Exception as e:
-                store_load_error = f"ローカルCSV読み込みエラー: {type(e).__name__}: {e}"
+    if df_master.empty:
+        local_master_file = "組合員向け集計シート_送付先学校一覧.csv"
+        if os.path.exists(local_master_file):
+            df_master = pd.read_csv(local_master_file).dropna(how='all').reset_index(drop=True)
 
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -329,13 +326,11 @@ try:
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
                         st.session_state.store_info["最終ログイン日時"] = now_jst
                         
-                        # ⚡ GASへのログ記録を非同期（スレッド）で実行（画面を待たせない）
                         record_login_to_gas(
                             st.session_state.store_info.get("店舗ID"),
                             st.session_state.store_info.get("店舗名"),
                             now_jst
                         )
-                        
                         st.success("認証に成功しました。")
                         st.rerun()
                     else:
@@ -394,22 +389,16 @@ try:
                     school_address_map[school_name] = address
                 school_area_map[school_name] = area
 
-    survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[1] if not df_survey.empty else None)
+    survey_school_col = next((col for col in df_survey.columns if "学校" in str(col)), None) or (df_survey.columns[2] if not df_survey.empty else None)
     survey_addr_col = next((col for col in df_survey.columns if "住所" in str(col)), None) if not df_survey.empty else None
 
     def judge_survey_area_by_address(row):
         if survey_school_col and pd.notna(row[survey_school_col]):
             s_name = normalize_school_name(row[survey_school_col])
-            
             if s_name in school_area_map and school_area_map[s_name] in AREA_RULES_ADDR:
                 return school_area_map[s_name]
-            
             if s_name in school_address_map:
                 return get_area_by_address_only(school_address_map[s_name])
-            
-            matches = [m_addr for m_name, m_addr in school_address_map.items() if s_name in m_name or m_name in s_name]
-            if len(matches) == 1:
-                return get_area_by_address_only(matches[0])
 
         addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
         return get_area_by_address_only(addr_text)
@@ -417,90 +406,10 @@ try:
     if not df_survey.empty and survey_school_col:
         df_survey["地区"] = df_survey.apply(judge_survey_area_by_address, axis=1)
 
-    # ================= 事務局（Z001）専用 管理モード・警告 ＆ セキュリティ監視 =================
+    # 事務局管理者モード
     is_admin = store_id.upper() == "Z001" or access_key in ["Z001", "HV4F6HB", "ADMIN123"]
     if is_admin:
         st.info("🛠 **【事務局管理者モード】** ログイン中")
-        
-        # 年1回のアクセスキー更新案内メッセージ
-        st.warning(
-            "🔑 **【セキュリティ運用案内】**\n\n"
-            "セキュリティ維持のため、**年に1回（新年度開始時など）** アクセスキーの一括再発行・交換を推奨しています。\n\n"
-            "※再発行は Google スプレッドシートの Apps Script 内 `generateNewAccessKeys` を手動実行することで一括更新できます。",
-            icon="💡"
-        )
-        
-        # 1. 事務局自身のアクセス履歴表示（補正処理付き）
-        if not df_stores.empty:
-            z001_row = df_stores[
-                df_stores["店舗ID"].astype(str).str.upper().str.contains("Z001") | 
-                df_stores["アクセスキー"].astype(str).str.upper().str.contains("HV4F6HB")
-            ]
-            if not z001_row.empty:
-                z_cnt_raw = z001_row.iloc[0].get("ログイン回数", None)
-                z_time_raw = z001_row.iloc[0].get("最終ログイン日時", None)
-                
-                z_cnt = "0" if pd.isna(z_cnt_raw) or str(z_cnt_raw).lower() in ["nan", "none", ""] else str(z_cnt_raw).replace(".0", "")
-                z_time = st.session_state.store_info.get("最終ログイン日時", "未ログイン") if pd.isna(z_time_raw) or str(z_time_raw).lower() in ["nan", "none", ""] else str(z_time_raw)
-                
-                st.caption(f"🏢 **事務局（Z001）アクセス履歴**: 累計ログイン回数 **{z_cnt} 回** ｜ 最終ログイン日時: **{z_time}**")
-
-        # 2. 精査漏れ警告
-        if not df_raw.empty and not df_survey.empty:
-            raw_school_col = next((c for c in df_raw.columns if "学校" in str(c)), None)
-            uploaded_school_col = next((c for c in df_survey.columns if "学校" in str(c)), None)
-            
-            if raw_school_col and uploaded_school_col:
-                raw_schools = set(df_raw[raw_school_col].dropna().astype(str).str.strip().unique())
-                uploaded_schools = set(df_survey[uploaded_school_col].dropna().astype(str).str.strip().unique())
-                
-                unprocessed = list(raw_schools - uploaded_schools)
-                
-                if unprocessed:
-                    st.warning(
-                        f"🚨 **【精査・移動漏れ警告】** 「アンケート集計」シートに回答が届いていますが、\n\nまだ「アップロード用」シートへ反映されていない学校が **{len(unprocessed)} 件** あります！\n\n"
-                        f"**未反映の学校:** {', '.join(unprocessed)}",
-                        icon="⚠️"
-                    )
-                else:
-                    st.success("✅ すべての回答が精査済みです（「アップロード用」シートに全件反映完了）。")
-
-        # 3. 店舗アクセス状況ログ一覧（None/NaNの全件補正表示）
-        with st.expander("📊 全店舗のアクセスログ・ログイン履歴一覧", expanded=True):
-            if df_stores.empty:
-                st.error("店舗マスターが空です。")
-                if store_load_error:
-                    st.code(store_load_error)
-            else:
-                st.caption(f"店舗マスター読み込み成功：{len(df_stores)} 件")
-                
-                df_display_stores = df_stores.copy()
-                if "ログイン回数" in df_display_stores.columns:
-                    df_display_stores["ログイン回数"] = (
-                        pd.to_numeric(df_display_stores["ログイン回数"], errors="coerce")
-                        .fillna(0)
-                        .astype(int)
-                    )
-                if "最終ログイン日時" in df_display_stores.columns:
-                    df_display_stores["最終ログイン日時"] = (
-                        df_display_stores["最終ログイン日時"]
-                        .fillna("未ログイン")
-                        .astype(str)
-                        .replace({"nan": "未ログイン", "None": "未ログイン", "": "未ログイン"})
-                    )
-
-                show_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c in df_display_stores.columns]
-                missing_cols = [c for c in ["店舗ID", "店舗名", "地区", "ログイン回数", "最終ログイン日時"] if c not in df_display_stores.columns]
-                
-                if missing_cols:
-                    st.warning("店舗マスターに次の列が見つかりません：「" + "」、「".join(missing_cols) + "」")
-                
-                if show_cols:
-                    st.dataframe(df_display_stores[show_cols], use_container_width=True, hide_index=True)
-                else:
-                    st.error("表示できる列がありません。店舗マスターの1行目が正しい列名になっているか確認してください。")
-
-        st.markdown("---")
 
     # サイドバー絞り込み
     st.sidebar.header("🔍 絞り込み検索")
@@ -512,55 +421,23 @@ try:
     selected_area = st.sidebar.selectbox("地区を選択（他地区も参照可能）", area_list, index=default_index)
     search_keyword = st.sidebar.text_input("学校名で検索")
 
-    # --------------------------------------------------
-    # 📖 【権限別】サイドバーのマニュアル（組合員用 vs 事務局管理者用）
-    # --------------------------------------------------
+    # マニュアル表示
     if is_admin:
         with st.sidebar.expander("🛠️ 事務局・管理者用 運用マニュアル", expanded=False):
             st.markdown("""
             ### 🛠️ 事務局管理者マニュアル
-            
-            #### 1. 日常のデータ精査・移動フロー
-            1. 新規回答が届くと、画面上部に **「🚨【精査・移動漏れ警告】」** が自動表示されます。
-            2. Googleスプレッドシートの **「アンケート集計」** シートを開き、回答内容（学校名・誤字等）を確認・補正します。
-            3. 精査した行を **「アップロード用」** シートへコピー＆ペースト（移動）します。
-            4. **「ファイル」➔「共有」➔「Webに公開」** で「公開を停止」➔「公開を開始」を行うと、アプリ側へ即時反映されます。
-
-            ---
-            #### 2. FAXでの情報共有・出力手順
-            1. サイドバーで対象の **「地区」** を選択します。
-            2. タブ1（PDF印刷）の **「FAX用まとめPDF（2枚）をダウンロード」** ボタンを押します。
-            3. 1枚目（地区サマリー）と2枚目（全校13項目一覧表）がA4サイズで出力されるため、そのままFAX送信や印刷配布が可能です。
-
-            ---
-            #### 3. アクセスログ ＆ 店舗マスター管理
-            * **アクセスログ**: 全ログイン履歴が「アクセスログ」シートへ自動積載されます。
-            * **店舗追加・修正**: 「店舗マスター」シートのID・店舗名を直接修正してください。
-            * **店舗IDの表記統一**: 全角やスペース混在時は、数式 `=ASC(SUBSTITUTE(A2," ",""))` を使用して半角・スペースなし（例: `A001`）へ一括統一してください。
-
-            ---
-            #### 4. 年1回のアクセスキー一括更新（推奨）
-            1. Googleスプレッドシートの上部メニュー **「拡張機能」➔「Apps Script」** を開きます。
-            2. 関数 `generateNewAccessKeys` を選択し **「実行」** をクリックします（※事務局Z001以外の全キーが一括再生成されます）。
-            3. Web公開CSVを再公開し、新キーを各店舗へ周知します。
-
-            ---
-            #### 5. トラブルシューティング
-            * **「キーが無効」と出た場合**: スプレッドシートの「Webに公開」を一度停止➔再公開してCSVキャッシュを更新してください。
+            * **参照用シート**: `組合員向け集計シート` の **「作業用_地区別ベース_修正済み」** および **「送付先学校一覧」** を参照しています。
+            * **データ修正**: 元データを直接触らず、`組合員向け集計シート` 側で手動修正・反映が可能です。
             """)
     else:
         with st.sidebar.expander("📖 ご利用ガイド・印刷方法", expanded=False):
             st.markdown("""
             **【基本的な使い方】**
-            1. **自地区のデータ表示**
-               ログインすると、まず自店舗の地区の高校データが表示されます。
-            2. **他地区の高校を探す**
-               「地区を選択」で地区を切り替えるか、「学校名で検索」に学校名を入力してください。
-            3. **PDFの保存・印刷（A4縦1枚）**
-               画面中央の **「〇〇高校 回答PDFを保存・印刷」** ボタンを押すと、A4・1枚に整えられたPDFファイルがダウンロードされます。
+            1. **自地区のデータ表示**: ログインすると自地区の高校が表示されます。
+            2. **PDF保存**: 「回答PDFを保存・印刷」でA4サイズのシートを出力できます。
             """)
 
-    # フィルタリング
+    # データ絞り込み
     filtered_survey = df_survey.copy()
     if not filtered_survey.empty and survey_school_col:
         if selected_area != "すべての地区（全県）":
@@ -568,7 +445,7 @@ try:
         if search_keyword:
             filtered_survey = filtered_survey[filtered_survey[survey_school_col].astype(str).str.contains(search_keyword, na=False)]
 
-    # 上部サマリーカード
+    # サマリー表示
     col1, col2, col3, col4 = st.columns(4)
     total_responses = len(df_survey)
     col1.metric("アンケート回答数（精査済み）", f"{total_responses} 校")
@@ -592,16 +469,11 @@ try:
     with tab1:
         st.subheader("📄 PDF印刷・出力（個別の学校 ＆ FAX用地区別2枚まとめ）")
         
-        # 1. 地区別まとめFAX PDFダウンロード
+        # 1. FAX用まとめPDF
         if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
             st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区集計・一覧2枚まとめPDF")
-            st.caption("※1枚目：地区集計サマリー / 2枚目：地区内全校の13項目一覧表（A4横）")
             
-            if not df_master.empty:
-                district_master_count = len(df_master[df_master["地区"] == selected_area])
-            else:
-                district_master_count = len(filtered_survey)
-
+            district_master_count = len(df_master[df_master["地区"] == selected_area]) if not df_master.empty else len(filtered_survey)
             fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey, district_master_count)
             st.download_button(
                 label=f"📥 【{selected_area}地区】 FAX用まとめPDF（2枚）をダウンロード",
@@ -627,45 +499,43 @@ try:
             )
             
             st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', '要確認')}地区）")
-            display_items = [("所属地区（住所より判定）", f"{school_data.get('地区', '要確認')}地区")]
-            for k, v in school_data.items():
-                if k != "地区" and not any(ex in str(k) for ex in EXCLUDE_KEYS):
-                    display_items.append((k, v))
             
-            detail_df = pd.DataFrame(display_items, columns=["項目・設問", "回答内容"])
+            display_items = [("所属地区", f"{school_data.get('地区', '要確認')}地区")]
+            for full_col, short_name in DISPLAY_COLS:
+                val = school_data.get(full_col, school_data.get(short_name, "-"))
+                display_items.append((f"{short_name} ({full_col[:15]})", val))
+            
+            detail_df = pd.DataFrame(display_items, columns=["項目名", "回答内容"])
             st.dataframe(detail_df, use_container_width=True)
         else:
             st.info("該当する学校の回答データがありません。")
 
     with tab2:
         st.subheader("💡 設問別回答割合")
-        rule_cols = [col for col in df_survey.columns if any(k in str(col) for k in ["ヘルメット", "許可", "点検", "TSマーク", "施錠", "ルール"])] if not df_survey.empty else []
-        if rule_cols and len(filtered_survey) > 0:
-            selected_q = st.selectbox("集計したい設問を選択してください：", rule_cols)
-            if selected_q:
-                q_counts = filtered_survey[selected_q].value_counts().reset_index()
-                q_counts.columns = ["回答内容", "校数"]
-                fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
-                st.plotly_chart(fig_q, use_container_width=True)
+        if not filtered_survey.empty:
+            selectable_cols = [c for c, _ in DISPLAY_COLS if c in filtered_survey.columns]
+            if selectable_cols:
+                selected_q = st.selectbox("集計したい設問を選択してください：", selectable_cols)
+                if selected_q:
+                    q_counts = filtered_survey[selected_q].value_counts().reset_index()
+                    q_counts.columns = ["回答内容", "校数"]
+                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
+                    st.plotly_chart(fig_q, use_container_width=True)
 
     with tab3:
         st.subheader("⚠️ 未回答校の進捗管理")
         if not df_master.empty and master_school_col:
             answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist() if not df_survey.empty and survey_school_col else []
-            
             df_master["回答ステータス"] = df_master[master_school_col].apply(
                 lambda x: "回答済み" if any(ans in str(x) or str(x) in ans for ans in answered_schools) else "未回答"
             )
             df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
-            
             if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
                 df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
-            show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号", "メールアドレス / 連絡先状況"] if c in df_unanswered.columns]
+            show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号"] if c in df_unanswered.columns]
             st.dataframe(df_unanswered[show_cols], use_container_width=True)
-        else:
-            st.info("💡 送付先マスターが連携されると、未回答校リストが自動表示されます。")
 
 except Exception as e:
     st.error(f"システムエラーが発生しました: {e}")
