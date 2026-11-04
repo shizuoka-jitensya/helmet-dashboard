@@ -4,6 +4,7 @@ import plotly.express as px
 import io
 import os
 import requests
+import threading
 from datetime import datetime, timezone, timedelta
 
 # 日本時間（JST: UTC+9）の定義
@@ -48,19 +49,42 @@ EXCLUDE_KEYS = [
     "タイムスタンプ", "データの最終確認日"
 ]
 
+# --------------------------------------------------
+# ⚡ ログイン高速化：GASログ送信の非同期処理（裏側で送信）
+# --------------------------------------------------
+def _send_log_async(log_api_url, payload):
+    """裏側でGASへログを送信（画面を一切待たせない）"""
+    try:
+        requests.post(log_api_url, json=payload, timeout=5)
+    except Exception:
+        pass
+
 def record_login_to_gas(store_id, store_name, timestamp):
-    """Google Apps Scriptへログインログを自動送信（アクセスログ追記＋マスター更新）"""
+    """Google Apps Scriptへアクセスログを非同期送信"""
     log_api_url = st.secrets.get("LOG_API_URL")
     if log_api_url:
-        try:
-            payload = {
-                "store_id": str(store_id).strip(),
-                "store_name": str(store_name).strip(),
-                "timestamp": str(timestamp)
-            }
-            requests.post(log_api_url, json=payload, timeout=3)
-        except Exception:
-            pass  # 通信エラー時もユーザー画面のログイン動作自体は阻害しない
+        payload = {
+            "store_id": str(store_id).strip(),
+            "store_name": str(store_name).strip(),
+            "timestamp": str(timestamp)
+        }
+        thread = threading.Thread(target=_send_log_async, args=(log_api_url, payload))
+        thread.start()
+
+# --------------------------------------------------
+# ⚡ 高速化：スプレッドシートデータのキャッシュ（5分間保持）
+# --------------------------------------------------
+@st.cache_data(ttl=300, show_spinner=False)
+def load_csv_data(url):
+    """URLからCSVを取得してキャッシュする"""
+    if not url:
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(url).dropna(how='all').reset_index(drop=True)
+        df.columns = [str(c).strip().lstrip("\ufeff") for c in df.columns]
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 def get_area_by_address_only(address_text):
     """学校住所から所属地区を判定する。未判定は要確認。"""
@@ -247,35 +271,19 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
     buffer.seek(0)
     return buffer
 
-# --- データの読み込み＆メイン処理 ---
+# --- データの高速読み込み処理 ---
 try:
     upload_url = st.secrets.get("SPREADSHEET_URL")
     raw_url = st.secrets.get("RAW_SPREADSHEET_URL")
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
     store_url = st.secrets.get("STORE_SPREADSHEET_URL")
 
-    df_survey = pd.DataFrame()
-    df_raw = pd.DataFrame()
-    df_master = pd.DataFrame()
-    df_stores = pd.DataFrame()
+    # キャッシュを活用して高速ロード
+    df_survey = load_csv_data(upload_url)
+    df_raw = load_csv_data(raw_url)
+    df_master = load_csv_data(master_url)
+    df_stores = load_csv_data(store_url)
 
-    if upload_url:
-        try:
-            df_survey = pd.read_csv(upload_url).dropna(how='all').reset_index(drop=True)
-        except Exception:
-            pass
-
-    if raw_url:
-        try:
-            df_raw = pd.read_csv(raw_url).dropna(how='all').reset_index(drop=True)
-        except Exception:
-            pass
-
-    if master_url:
-        try:
-            df_master = pd.read_csv(master_url).dropna(how='all').reset_index(drop=True)
-        except Exception:
-            pass
     if df_master.empty:
         local_master_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_送付先学校一覧.csv"
         if os.path.exists(local_master_file):
@@ -285,19 +293,6 @@ try:
                 pass
 
     store_load_error = None
-    if not store_url:
-        store_load_error = "STORE_SPREADSHEET_URL が Secrets に設定されていません。"
-    else:
-        try:
-            df_stores = pd.read_csv(store_url).dropna(how="all")
-            df_stores.columns = [str(c).strip().lstrip("\ufeff") for c in df_stores.columns]
-            df_stores = df_stores.reset_index(drop=True)
-            if df_stores.empty:
-                store_load_error = "CSVは取得できましたが、データ行がありません。"
-        except Exception as e:
-            store_load_error = f"URL読み込みエラー: {type(e).__name__}: {e}"
-            df_stores = pd.DataFrame()
-
     if df_stores.empty:
         local_store_file = "高校自転車通学_ヘルメットアンケート集計閲覧システム_システ_店舗マスター.csv"
         if os.path.exists(local_store_file):
@@ -307,11 +302,6 @@ try:
                 df_stores = df_stores.reset_index(drop=True)
             except Exception as e:
                 store_load_error = f"ローカルCSV読み込みエラー: {type(e).__name__}: {e}"
-
-    if not df_master.empty:
-        df_master.columns = [str(c).strip().lstrip("\ufeff") for c in df_master.columns]
-    if not df_survey.empty:
-        df_survey.columns = [str(c).strip().lstrip("\ufeff") for c in df_survey.columns]
 
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -339,7 +329,7 @@ try:
                         st.session_state.store_info = valid_store.iloc[0].to_dict()
                         st.session_state.store_info["最終ログイン日時"] = now_jst
                         
-                        # GASを介してアクセスログの積載と回数更新を実行
+                        # ⚡ GASへのログ記録を非同期（スレッド）で実行（画面を待たせない）
                         record_login_to_gas(
                             st.session_state.store_info.get("店舗ID"),
                             st.session_state.store_info.get("店舗名"),
@@ -484,7 +474,6 @@ try:
             else:
                 st.caption(f"店舗マスター読み込み成功：{len(df_stores)} 件")
                 
-                # 専門家指摘の None / NaN 自動補正処理
                 df_display_stores = df_stores.copy()
                 if "ログイン回数" in df_display_stores.columns:
                     df_display_stores["ログイン回数"] = (
@@ -527,14 +516,13 @@ try:
     # 📖 【権限別】サイドバーのマニュアル（組合員用 vs 事務局管理者用）
     # --------------------------------------------------
     if is_admin:
-        # 事務局（Z001）ログイン時：管理者向けフル運用マニュアルを表示
         with st.sidebar.expander("🛠️ 事務局・管理者用 運用マニュアル", expanded=False):
             st.markdown("""
             ### 🛠️ 事務局管理者マニュアル
             
             #### 1. 日常のデータ精査・移動フロー
             1. 新規回答が届くと、画面上部に **「🚨【精査・移動漏れ警告】」** が自動表示されます。
-            2. Googleスプレッドシートの **「アンケート集集計」** シートを開き、回答内容（学校名・誤字等）を確認・補正します。
+            2. Googleスプレッドシートの **「アンケート集計」** シートを開き、回答内容（学校名・誤字等）を確認・補正します。
             3. 精査した行を **「アップロード用」** シートへコピー＆ペースト（移動）します。
             4. **「ファイル」➔「共有」➔「Webに公開」** で「公開を停止」➔「公開を開始」を行うと、アプリ側へ即時反映されます。
 
@@ -561,7 +549,6 @@ try:
             * **「キーが無効」と出た場合**: スプレッドシートの「Webに公開」を一度停止➔再公開してCSVキャッシュを更新してください。
             """)
     else:
-        # 組合員（店舗）ログイン時：シンプルガイドを表示
         with st.sidebar.expander("📖 ご利用ガイド・印刷方法", expanded=False):
             st.markdown("""
             **【基本的な使い方】**
