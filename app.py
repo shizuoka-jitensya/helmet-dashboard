@@ -477,5 +477,29 @@ try:
                 if selected_q:
                     q_counts = filtered_survey[selected_q].value_counts().reset_index()
                     q_counts.columns = ["回答内容", "校数"]
-                    fig_q = px.pie(q_counts, names="回答内容", values="校数", title=f"【設問集計】{selected_q}", hole=0.4)
+                    fig_q = px.pie(
+                        q_counts,
+                        names="回答内容",
+                        values="校数",
+                        title=f"【設問集計】{selected_q}",
+                        hole=0.4
+                    )
                     st.plotly_chart(fig_q, use_container_width=True)
+
+    with tab3:
+        st.subheader("⚠️ 未回答校の進捗管理")
+        if not df_master.empty and master_school_col:
+            answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist() if not df_survey.empty and survey_school_col else []
+            df_master["回答ステータス"] = df_master[master_school_col].apply(
+                lambda x: "回答済み" if any(ans in str(x) or str(x) in ans for ans in answered_schools) else "未回答"
+            )
+            df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
+            if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
+                df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
+
+            st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
+            show_cols = [c for c in ["地区", "設置区分", master_school_col, "住所", "電話番号"] if c in df_unanswered.columns]
+            st.dataframe(df_unanswered[show_cols], use_container_width=True)
+
+except Exception as e:
+    st.error(f"システムエラーが発生しました: {e}")
