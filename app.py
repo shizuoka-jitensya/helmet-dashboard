@@ -52,17 +52,17 @@ DISPLAY_COLS = [
     ("点検を行う自転車店の指定", "5:点検店舗指定"),
     ("色の指定", "6:車体色"),
     ("ハンドルの形状", "7:ハンドル形状"),
-    ("スタンドの仕様", "8:スタンド基準"),
-    ("荷台（キャリア）についてのルール", "9:荷台基準"),
+    ("スタンドの仕様", "8:スタンド仕様"),
+    ("荷台についてのルール", "9:荷台基準"),
     ("鍵の数", "10:鍵の数"),
     ("スポーツ・小径・折り畳み自転車について", "11:スポーツ・小径・折り畳み"),
     ("電動アシストについて", "12:電動アシスト"),
     ("新１年生の点検時期", "13:新１年生点検"),
     ("新２年生の点検時期", "14:新２年生点検"),
     ("新３年生の点検時期", "15:新３年生点検"),
-    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "16:ヘルメット義務化"),
+    ("学校独自のヘルメット着用制度変更の予定", "16:ヘルメット義務化"),
     ("特定の製品モデルのヘルメット指定", "17:ヘルメット指定"),
-    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "18:ヘルメット不足対応"),
+    ("ヘルメット不足への対応", "18:ヘルメット不足対応"),
     ("自転車保険・TSマークについて", "19:保険・TS"),
     ("その他", "20:その他")
 ]
@@ -126,31 +126,32 @@ def normalize_school_name(value):
     name = str(value).strip()
     return name.replace(" ", "").replace(" ", "")
 
-# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚） ---
+# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・テキスト切れ解消版） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
+        rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20
     )
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=13, leading=16, alignment=1)
-    sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=10, leading=13, alignment=1)
-    body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=10.5)
-    header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.5, leading=11, textColor=colors.whitesmoke, alignment=1)
+    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=12, leading=15, alignment=1)
+    sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=9.5, leading=12, alignment=1)
+    lbl_style = ParagraphStyle('JP_Lbl', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.5)
+    body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.5)
+    header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
 
     school_name = str(school_data.get('学校名', '高校アンケート回答'))
     area_name = str(school_data.get('地区', 'その他'))
     
     story.append(Paragraph(f"🚲 静岡県内高校 自転車通学・ヘルメット着用状況 回答シート", title_style))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
     story.append(Paragraph(f"<b>【学校名】 {school_name} （所属地区：{area_name}地区）</b>", sub_style))
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 4))
 
     table_data = [[Paragraph("<b>調査項目</b>", header_style), Paragraph("<b>学校の回答内容</b>", header_style)]]
-    table_data.append([Paragraph("所属地区", body_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
+    table_data.append([Paragraph("<b>所属地区</b>", lbl_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
 
     for full_col, short_label in DISPLAY_COLS:
         val = school_data.get(full_col, None)
@@ -159,16 +160,23 @@ def generate_school_pdf(school_data):
             val = school_data.get(matching_col, "-") if matching_col else "-"
 
         val_str = str(val).strip()
-        table_data.append([Paragraph(f"<b>{short_label}</b><br/><font size=6.5 color='#555555'>{full_col[:18]}</font>", body_style), Paragraph(val_str, body_style)])
+        # カラム名の重複表示を廃止し、ご指定の簡潔ラベル（1:許可 ... 20:その他）を表示
+        table_data.append([
+            Paragraph(f"<b>{short_label}</b>", lbl_style),
+            Paragraph(val_str, body_style)
+        ])
 
-    t = Table(table_data, colWidths=[170, 365])
+    # A4縦幅（555pt）に合わせてレイアウト調整
+    t = Table(table_data, colWidths=[135, 420])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('GRID', (0,0), (-1,-1), 0.4, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 2.5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+        ('TOPPADDING', (0,0), (-1,-1), 1.8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.8),
+        ('LEFTPADDING', (0,0), (-1,-1), 4),
+        ('RIGHTPADDING', (0,0), (-1,-1), 4),
     ]))
     
     story.append(t)
@@ -214,7 +222,6 @@ def generate_district_fax_pdf(area_name, district_df):
         matrix_data.append(row_cells)
 
     # 全21列（学校名 + 20設問）の幅調整 (A4横 幅792pt)
-    # 学校名: 62pt, 設問20個: 各36.5pt
     col_w = [62] + [36.5] * 20
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
