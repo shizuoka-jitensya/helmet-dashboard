@@ -12,13 +12,13 @@ JST = timezone(timedelta(hours=9))
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
-# 日本語CIDフォントの登録（ReportLab標準組み込み）
+# 日本語CIDフォントの登録
 JAPANESE_FONT = 'HeiseiKakuGo-W5'
 pdfmetrics.registerFont(UnicodeCIDFont(JAPANESE_FONT))
 
@@ -176,68 +176,21 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別2枚まとめPDF生成機能（A4横） ---
-def generate_district_fax_pdf(area_name, district_df, total_master_count):
+# --- 2. FAX用 地区別一覧PDF生成機能（サマリーなし A4横 1枚化） ---
+def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=13, leading=16, alignment=1)
-    subtitle_style = ParagraphStyle('D_SubTitle', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=9.5, leading=13, alignment=1)
-    body_style = ParagraphStyle('D_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=11)
+    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=12, leading=15, alignment=1)
     hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.5, textColor=colors.whitesmoke, alignment=1)
     cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6, leading=7.5)
     
     story = []
 
-    # 1枚目: サマリー
-    story.append(Paragraph(f"🚲 【組合員限定・非公表】 {area_name}地区 高校自転車通学・ヘルメット着用状況", title_style))
-    story.append(Paragraph(f"（FAX送信用 地区集計サマリー）", subtitle_style))
-    story.append(Spacer(1, 10))
-
-    ans_count = len(district_df)
-    rate_str = f"{int((ans_count/total_master_count)*100)}%" if total_master_count > 0 else "-"
-    summary_text = f"<b>■ {area_name}地区 回答集計状況</b><br/>" \
-                   f"・地区内対象高校数：{total_master_count} 校 ｜ " \
-                   f"・回答済み高校数：{ans_count} 校（回答率: {rate_str}）<br/>"
-    story.append(Paragraph(summary_text, body_style))
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("<b>■ 主要設問の地区内回答傾向サマリー</b>", body_style))
-    story.append(Spacer(1, 4))
-
-    summary_table_data = [[Paragraph("<b>集計項目</b>", hdr_style), Paragraph("<b>地区内での主な傾向・回答内訳</b>", hdr_style)]]
-    
-    key_summary_items = [
-        ("自転車通学の許可", ["自転車通学の許可", "許可"]),
-        ("点検証明・店指定", ["点検を行う自転車店の指定", "点検証明の有無"]),
-        ("ヘルメット義務化の予定", ["ヘルメット", "令和9年度"]),
-        ("TSマーク・保険の扱い", ["自転車保険", "保険"])
-    ]
-
-    for label, keywords in key_summary_items:
-        matching_col = next((c for c in district_df.columns if any(k in str(c) for k in keywords)), None)
-        if matching_col and not district_df.empty:
-            vc = district_df[matching_col].value_counts()
-            trend_str = " / ".join([f"{k}: {v}校" for k, v in vc.items()])
-        else:
-            trend_str = "回答データなし"
-        summary_table_data.append([Paragraph(label, body_style), Paragraph(trend_str, body_style)])
-
-    st_table = Table(summary_table_data, colWidths=[160, 360])
-    st_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-    ]))
-    story.append(st_table)
-    
-    story.append(PageBreak())
-
-    # 2枚目: 一覧マトリクス
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校の回答状況一覧</b>", title_style))
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表</b>", title_style))
     story.append(Spacer(1, 6))
 
+    # 一覧表のヘッダー構築
     matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS[:15]]
     matrix_data = [matrix_hdr]
 
@@ -256,6 +209,7 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
+    # 全16列の幅調整 (合計790pt)
     col_w = [70] + [48] * 15
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
@@ -279,17 +233,15 @@ def generate_district_fax_pdf(area_name, district_df, total_master_count):
 # --- データの読み込み＆メイン処理 ---
 try:
     upload_url = st.secrets.get("SPREADSHEET_URL")
-    raw_url = st.secrets.get("RAW_SPREADSHEET_URL")
     master_url = st.secrets.get("MASTER_SPREADSHEET_URL")
     store_url = st.secrets.get("STORE_SPREADSHEET_URL")
 
     # キャッシュ読み込み
     df_survey = load_csv_data(upload_url)
-    df_raw = load_csv_data(raw_url)
     df_master = load_csv_data(master_url)
     df_stores = load_csv_data(store_url)
 
-    # 組合員向け集計シート の ローカルファイルからのフォールバック対応
+    # ローカルファイルからのフォールバック対応
     if df_survey.empty:
         local_base = "組合員向け集計シート_作業用_地区別ベース_修正済み.csv"
         if os.path.exists(local_base):
@@ -467,18 +419,17 @@ try:
     tab1, tab2, tab3 = st.tabs(["📄 学校別・地区別 PDF印刷", "📊 設問集計・グラフ分析", "📋 未回答校リスト（進捗管理）"])
 
     with tab1:
-        st.subheader("📄 PDF印刷・出力（個別の学校 ＆ FAX用地区別2枚まとめ）")
+        st.subheader("📄 PDF印刷・出力（個別の学校 ＆ FAX用地区別まとめ）")
         
         # 1. FAX用まとめPDF
         if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
-            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区集計・一覧2枚まとめPDF")
+            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横 1枚）")
             
-            district_master_count = len(df_master[df_master["地区"] == selected_area]) if not df_master.empty else len(filtered_survey)
-            fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey, district_master_count)
+            fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey)
             st.download_button(
-                label=f"📥 【{selected_area}地区】 FAX用まとめPDF（2枚）をダウンロード",
+                label=f"📥 【{selected_area}地区】 FAX用一覧PDFをダウンロード",
                 data=fax_pdf_bytes,
-                file_name=f"{selected_area}地区_FAX用集計・一覧まとめ.pdf",
+                file_name=f"{selected_area}地区_FAX用全校一覧まとめ.pdf",
                 mime="application/pdf",
                 type="primary"
             )
