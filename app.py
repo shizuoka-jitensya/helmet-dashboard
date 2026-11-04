@@ -46,23 +46,23 @@ AREA_RULES_ADDR = {
 # 20項目のご指定表示用カラム定義
 DISPLAY_COLS = [
     ("自転車通学の許可", "1:許可"),
-    ("自転車通学者数", "2:通学者数"),
-    ("自転車通学許可基準の有無", "3:許可基準"),
-    ("点検証明の有無", "4:点検証明"),
+    ("自転車通学者数", "2:自転車通学者数"),
+    ("自転車通学許可基準の有無", "3:自転車通学許可基準の有無"),
+    ("点検証明の有無", "4:点検証明の有無"),
     ("点検を行う自転車店の指定", "5:点検店舗指定"),
     ("色の指定", "6:車体色"),
     ("ハンドルの形状", "7:ハンドル形状"),
-    ("スタンドの仕様", "8:スタンド仕様"),
-    ("荷台についてのルール", "9:荷台基準"),
+    ("スタンドの仕様", "8:スタンド基準"),
+    ("荷台（キャリア）についてのルール", "9:荷台基準"),
     ("鍵の数", "10:鍵の数"),
     ("スポーツ・小径・折り畳み自転車について", "11:スポーツ・小径・折り畳み"),
     ("電動アシストについて", "12:電動アシスト"),
-    ("新１年生の点検時期", "13:新１年生点検"),
-    ("新２年生の点検時期", "14:新２年生点検"),
-    ("新３年生の点検時期", "15:新３年生点検"),
-    ("学校独自のヘルメット着用制度変更の予定", "16:ヘルメット義務化"),
+    ("新１年生の点検時期", "13:新１年生の点検時期"),
+    ("新２年生の点検時期", "14:新２年生の点検時期"),
+    ("新３年生の点検時期", "15:新３年生の点検時期"),
+    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "16:ヘルメット義務化"),
     ("特定の製品モデルのヘルメット指定", "17:ヘルメット指定"),
-    ("ヘルメット不足への対応", "18:ヘルメット不足対応"),
+    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "18:ヘルメット不足対応"),
     ("自転車保険・TSマークについて", "19:保険・TS"),
     ("その他", "20:その他")
 ]
@@ -160,13 +160,11 @@ def generate_school_pdf(school_data):
             val = school_data.get(matching_col, "-") if matching_col else "-"
 
         val_str = str(val).strip()
-        # カラム名の重複表示を廃止し、ご指定の簡潔ラベル（1:許可 ... 20:その他）を表示
         table_data.append([
             Paragraph(f"<b>{short_label}</b>", lbl_style),
             Paragraph(val_str, body_style)
         ])
 
-    # A4縦幅（555pt）に合わせてレイアウト調整
     t = Table(table_data, colWidths=[135, 420])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
@@ -199,12 +197,10 @@ def generate_district_fax_pdf(area_name, district_df):
     story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全20項目）</b>", title_style))
     story.append(Spacer(1, 4))
 
-    # 全20項目のヘッダー構築
     matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
     matrix_data = [matrix_hdr]
 
     for _, row in district_df.iterrows():
-        # 学校名は省略せず折り返し（2〜3段）表示
         full_school_name = str(row.get("学校名", "-")).replace("静岡県立", "県立").replace("静岡市立", "市立")
         row_cells = [Paragraph(full_school_name, school_cell_style)]
         
@@ -221,7 +217,6 @@ def generate_district_fax_pdf(area_name, district_df):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    # 全21列（学校名 + 20設問）の幅調整 (A4横 幅792pt)
     col_w = [62] + [36.5] * 20
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
