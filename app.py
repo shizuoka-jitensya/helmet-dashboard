@@ -43,28 +43,28 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-# 22項目の精査済み表示用カラム定義
+# 20項目のご指定表示用カラム定義
 DISPLAY_COLS = [
-    ("自転車通学の許可", "許可"),
-    ("自転車通学者数", "通学者数"),
-    ("自転車通学許可基準の有無", "許可基準"),
-    ("点検証明の有無", "点検証明"),
-    ("点検を行う自転車店の指定", "店指定"),
-    ("色の指定", "車体色"),
-    ("ハンドルの形状", "ハンドル"),
-    ("スタンドの仕様", "スタンド"),
-    ("荷台（キャリア）についてのルール", "荷台"),
-    ("鍵の数", "鍵数"),
-    ("スポーツ・小径・折り畳み自転車について", "車種制限"),
-    ("電動アシストについて", "電動アシスト"),
-    ("新１年生の点検時期", "1年点検"),
-    ("新２年生の点検時期", "2年点検"),
-    ("新３年生の点検時期", "3年点検"),
-    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "ヘルメット義務化"),
-    ("特定の製品モデルのヘルメット指定", "ヘルメット指定"),
-    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "ヘルメット不足対応"),
-    ("自転車保険・TSマークについて", "保険・TSマーク"),
-    ("その他", "その他・特記事項")
+    ("自転車通学の許可", "1:許可"),
+    ("自転車通学者数", "2:通学者数"),
+    ("自転車通学許可基準の有無", "3:許可基準"),
+    ("点検証明の有無", "4:点検証明"),
+    ("点検を行う自転車店の指定", "5:点検店舗指定"),
+    ("色の指定", "6:車体色"),
+    ("ハンドルの形状", "7:ハンドル形状"),
+    ("スタンドの仕様", "8:スタンド基準"),
+    ("荷台（キャリア）についてのルール", "9:荷台基準"),
+    ("鍵の数", "10:鍵の数"),
+    ("スポーツ・小径・折り畳み自転車について", "11:スポーツ・小径・折り畳み"),
+    ("電動アシストについて", "12:電動アシスト"),
+    ("新１年生の点検時期", "13:新１年生点検"),
+    ("新２年生の点検時期", "14:新２年生点検"),
+    ("新３年生の点検時期", "15:新３年生点検"),
+    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "16:ヘルメット義務化"),
+    ("特定の製品モデルのヘルメット指定", "17:ヘルメット指定"),
+    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "18:ヘルメット不足対応"),
+    ("自転車保険・TSマークについて", "19:保険・TS"),
+    ("その他", "20:その他")
 ]
 
 # --------------------------------------------------
@@ -88,7 +88,7 @@ def record_login_to_gas(store_id, store_name, timestamp):
         thread.start()
 
 # --------------------------------------------------
-# ⚡ CSVキャッシュ読み込み（1分間保持へ短縮）
+# ⚡ CSVキャッシュ読み込み（1分間保持）
 # --------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def load_csv_data(url):
@@ -176,26 +176,31 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別一覧PDF生成機能（A4横 1枚） ---
+# --- 2. FAX用 地区別一覧PDF生成機能（全20項目・学校名折り返し対応 A4横 1枚） ---
 def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=12, leading=15, alignment=1)
-    hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.5, textColor=colors.whitesmoke, alignment=1)
-    cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6, leading=7.5)
+    title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=11, leading=14, alignment=1)
+    hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6, leading=7.5, textColor=colors.whitesmoke, alignment=1)
+    school_cell_style = ParagraphStyle('D_SchCell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=6, leading=7.5, alignment=0)
+    cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=5.5, leading=7.0)
     
     story = []
 
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表</b>", title_style))
-    story.append(Spacer(1, 6))
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全20項目）</b>", title_style))
+    story.append(Spacer(1, 4))
 
-    matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS[:15]]
+    # 全20項目のヘッダー構築
+    matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
     matrix_data = [matrix_hdr]
 
     for _, row in district_df.iterrows():
-        row_cells = [Paragraph(str(row.get("学校名", "-"))[:10], cell_style)]
-        for full_col, short_name in DISPLAY_COLS[:15]:
+        # 学校名は省略せず折り返し（2〜3段）表示
+        full_school_name = str(row.get("学校名", "-")).replace("静岡県立", "県立").replace("静岡市立", "市立")
+        row_cells = [Paragraph(full_school_name, school_cell_style)]
+        
+        for full_col, short_name in DISPLAY_COLS:
             val = row.get(full_col, None)
             if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
                 matching_col = next((c for c in district_df.columns if short_name in str(c)), None)
@@ -208,22 +213,24 @@ def generate_district_fax_pdf(area_name, district_df):
             row_cells.append(Paragraph(val_short, cell_style))
         matrix_data.append(row_cells)
 
-    col_w = [70] + [48] * 15
+    # 全21列（学校名 + 20設問）の幅調整 (A4横 幅792pt)
+    # 学校名: 62pt, 設問20個: 各36.5pt
+    col_w = [62] + [36.5] * 20
     m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
     m_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 1.5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 1.5),
-        ('LEFTPADDING', (0,0), (-1,-1), 1.5),
-        ('RIGHTPADDING', (0,0), (-1,-1), 1.5),
+        ('TOPPADDING', (0,0), (-1,-1), 1),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+        ('LEFTPADDING', (0,0), (-1,-1), 1),
+        ('RIGHTPADDING', (0,0), (-1,-1), 1),
     ]))
 
     story.append(m_table)
 
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=15, leftMargin=15, topMargin=15, bottomMargin=15)
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10, leftMargin=10, topMargin=10, bottomMargin=10)
     doc.build(story)
     buffer.seek(0)
     return buffer
@@ -430,7 +437,7 @@ try:
         
         # 1. FAX用まとめPDF
         if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
-            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横 1枚）")
+            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横 1枚・全20項目）")
             
             fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey)
             st.download_button(
