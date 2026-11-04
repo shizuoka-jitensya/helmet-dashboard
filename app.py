@@ -88,11 +88,11 @@ def record_login_to_gas(store_id, store_name, timestamp):
         thread.start()
 
 # --------------------------------------------------
-# ⚡ CSVキャッシュ読み込み（5分間保持）
+# ⚡ CSVキャッシュ読み込み（1分間保持へ短縮）
 # --------------------------------------------------
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_csv_data(url):
-    if not url:
+    if not url or not str(url).startswith("http"):
         return pd.DataFrame()
     try:
         df = pd.read_csv(url).dropna(how='all').reset_index(drop=True)
