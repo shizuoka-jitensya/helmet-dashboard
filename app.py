@@ -126,10 +126,28 @@ def normalize_school_name(value):
     name = str(value).strip()
     return name.replace(" ", "").replace(" ", "")
 
-# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・文字拡大＆余白最適化版） ---
+# --- データ取得の補助関数（確実にデータを参照する） ---
+def fetch_cell_value(school_data, full_col, short_label):
+    # 1. 完全一致
+    if full_col in school_data and pd.notna(school_data[full_col]):
+        v = str(school_data[full_col]).strip()
+        if v and v.lower() not in ["nan", "none"]:
+            return v
+            
+    # 2. 簡易表記・部分一致の検索
+    clean_label = short_label.split(":")[-1] if ":" in short_label else short_label
+    for k, v in school_data.items():
+        if pd.notna(v):
+            v_str = str(v).strip()
+            if v_str and v_str.lower() not in ["nan", "none"]:
+                # カラム名に主要キーワードが含まれているか判定
+                if clean_label in str(k) or full_col[:4] in str(k):
+                    return v_str
+    return "-"
+
+# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・データ完全表示版） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
-    # 上下左右の空白を最小限（12pt）に調整
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
         rightMargin=12, leftMargin=12, topMargin=12, bottomMargin=12
@@ -139,7 +157,6 @@ def generate_school_pdf(school_data):
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=13, leading=16, alignment=1)
     sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=10, leading=12, alignment=1)
-    # 文字サイズを大きく（項目名:8pt, 回答内容:8.5pt）
     lbl_style = ParagraphStyle('JP_Lbl', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8, leading=9.5)
     body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.5, leading=10.5)
     header_style = ParagraphStyle('JP_Header', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.5, leading=10.5, textColor=colors.whitesmoke, alignment=1)
@@ -156,12 +173,7 @@ def generate_school_pdf(school_data):
     table_data.append([Paragraph("<b>所属地区</b>", lbl_style), Paragraph(f"<b>{area_name}地区</b>", body_style)])
 
     for full_col, short_label in DISPLAY_COLS:
-        val = school_data.get(full_col, None)
-        if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
-            matching_col = next((c for c in school_data.keys() if short_label in str(c) or full_col[:5] in str(c)), None)
-            val = school_data.get(matching_col, "-") if matching_col else "-"
-
-        val_str = str(val).strip()
+        val_str = fetch_cell_value(school_data, full_col, short_label)
         item_paragraph = Paragraph(f"<b>{full_col}</b><br/><font color='#444444'>（{short_label}）</font>", lbl_style)
         
         table_data.append([
@@ -169,7 +181,6 @@ def generate_school_pdf(school_data):
             Paragraph(val_str, body_style)
         ])
 
-    # 幅合計: 571pt (A4幅595pt - 左右余白24pt)
     t = Table(table_data, colWidths=[160, 411])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
@@ -193,13 +204,12 @@ def generate_district_fax_pdf(area_name, district_df):
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('D_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=11, leading=13, alignment=1)
-    # 5校が1ページに収まる文字サイズ（ヘッダー:7.5pt, 学校名:8.0pt, 回答内容:7.0pt）
     hdr_style = ParagraphStyle('D_Hdr', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.5, leading=9.0, textColor=colors.whitesmoke, alignment=1)
     school_cell_style = ParagraphStyle('D_SchCell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=8.0, leading=9.5, alignment=0)
     cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.0, leading=8.2)
     
     story = []
-    chunk_size = 5  # 1シート（1ページ）あたり5校
+    chunk_size = 5
 
     for i in range(0, len(district_df), chunk_size):
         chunk_df = district_df.iloc[i:i+chunk_size]
@@ -217,12 +227,8 @@ def generate_district_fax_pdf(area_name, district_df):
             row_cells = [Paragraph(full_school_name, school_cell_style)]
             
             for full_col, short_name in DISPLAY_COLS:
-                val = row.get(full_col, None)
-                if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
-                    matching_col = next((c for c in district_df.columns if short_name in str(c)), None)
-                    val = row.get(matching_col, "-") if matching_col else "-"
-                
-                val_str = str(val).strip()
+                row_dict = row.to_dict()
+                val_str = fetch_cell_value(row_dict, full_col, short_name)
                 row_cells.append(Paragraph(val_str, cell_style))
             matrix_data.append(row_cells)
 
@@ -481,7 +487,7 @@ try:
             
             display_items = [("所属地区", f"{school_data.get('地区', '要確認')}地区")]
             for full_col, short_name in DISPLAY_COLS:
-                val = school_data.get(full_col, school_data.get(short_name, "-"))
+                val = fetch_cell_value(school_data, full_col, short_name)
                 display_items.append((f"{short_name} ({full_col[:15]})", val))
             
             detail_df = pd.DataFrame(display_items, columns=["項目名", "回答内容"])
