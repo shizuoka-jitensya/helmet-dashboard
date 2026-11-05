@@ -12,7 +12,7 @@ JST = timezone(timedelta(hours=9))
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
@@ -43,26 +43,26 @@ AREA_RULES_ADDR = {
     "西遠": ["浜松市", "湖西市"]
 }
 
-# 20項目のご指定表示用カラム定義
+# ご指定の20項目 カラム名・簡易表記定義
 DISPLAY_COLS = [
     ("自転車通学の許可", "1:許可"),
     ("自転車通学者数", "2:自転車通学者数"),
     ("自転車通学許可基準の有無", "3:自転車通学許可基準の有無"),
-    ("点検証明の有無", "4:点検証明の有無"),
+    ("自転車点検証明の有無", "4:点検証明の有無"),
     ("点検を行う自転車店の指定", "5:点検店舗指定"),
-    ("色の指定", "6:車体色"),
+    ("車体色の指定", "6:車体色"),
     ("ハンドルの形状", "7:ハンドル形状"),
     ("スタンドの仕様", "8:スタンド基準"),
-    ("荷台（キャリア）についてのルール", "9:荷台基準"),
+    ("荷台についてのルール", "9:荷台基準"),
     ("鍵の数", "10:鍵の数"),
     ("スポーツ・小径・折り畳み自転車について", "11:スポーツ・小径・折り畳み"),
-    ("電動アシストについて", "12:電動アシスト"),
+    ("電動アシスト自転車について", "12:電動アシスト"),
     ("新１年生の点検時期", "13:新１年生の点検時期"),
     ("新２年生の点検時期", "14:新２年生の点検時期"),
     ("新３年生の点検時期", "15:新３年生の点検時期"),
-    ("令和9年度（2027年4月）以降の「学校独自のヘルメット着用制度変更の予定」", "16:ヘルメット義務化"),
+    ("４月以降の学校独自のヘルメット着用制度変更の予定", "16:ヘルメット義務化"),
     ("特定の製品モデルのヘルメット指定", "17:ヘルメット指定"),
-    ("令和9年度（2027年4月）以降のヘルメット不足への対応", "18:ヘルメット不足対応"),
+    ("４月以降のヘルメット不足への対応", "18:ヘルメット不足対応"),
     ("自転車保険・TSマークについて", "19:保険・TS"),
     ("その他", "20:その他")
 ]
@@ -126,18 +126,17 @@ def normalize_school_name(value):
     name = str(value).strip()
     return name.replace(" ", "").replace(" ", "")
 
-# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・完全フィット版） ---
+# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・上下2段表記＆ボリューム調整版） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
-    # 上下左右の余白を15ptに最適化
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        rightMargin=15, leftMargin=15, topMargin=15, bottomMargin=15
+        rightMargin=18, leftMargin=18, topMargin=18, bottomMargin=18
     )
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=11, leading=13, alignment=1)
+    title_style = ParagraphStyle('JP_Title', parent=styles['Heading1'], fontName=JAPANESE_FONT, fontSize=11.5, leading=14, alignment=1)
     sub_style = ParagraphStyle('JP_Sub', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=9, leading=11, alignment=1)
     lbl_style = ParagraphStyle('JP_Lbl', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7, leading=8.5)
     body_style = ParagraphStyle('JP_Body', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7, leading=8.5)
@@ -161,13 +160,15 @@ def generate_school_pdf(school_data):
             val = school_data.get(matching_col, "-") if matching_col else "-"
 
         val_str = str(val).strip()
+        # 項目名をメイン、簡易表記を（ ）の上下2段で表示
+        item_paragraph = Paragraph(f"<b>{full_col}</b><br/><font color='#444444'>（{short_label}）</font>", lbl_style)
+        
         table_data.append([
-            Paragraph(f"<b>{short_label}</b>", lbl_style),
+            item_paragraph,
             Paragraph(val_str, body_style)
         ])
 
-    # 幅合計: 565pt (A4幅595pt - 左右余白30pt)
-    t = Table(table_data, colWidths=[130, 435])
+    t = Table(table_data, colWidths=[150, 409])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
@@ -184,7 +185,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別一覧PDF生成機能（全20項目・学校名折り返し対応 A4横 1枚） ---
+# --- 2. FAX用 地区別一覧PDF生成機能（1シートあたり最大5校・A4横） ---
 def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
@@ -195,44 +196,54 @@ def generate_district_fax_pdf(area_name, district_df):
     cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=5.5, leading=7.0)
     
     story = []
+    chunk_size = 5  # 1シート（1ページ）あたり5校
 
-    story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全20項目）</b>", title_style))
-    story.append(Spacer(1, 4))
+    for i in range(0, len(district_df), chunk_size):
+        chunk_df = district_df.iloc[i:i+chunk_size]
+        page_num = (i // chunk_size) + 1
+        total_pages = ((len(district_df) - 1) // chunk_size) + 1
 
-    matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
-    matrix_data = [matrix_hdr]
+        story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全20項目） [{page_num}/{total_pages}ページ]</b>", title_style))
+        story.append(Spacer(1, 4))
 
-    for _, row in district_df.iterrows():
-        full_school_name = str(row.get("学校名", "-")).replace("静岡県立", "県立").replace("静岡市立", "市立")
-        row_cells = [Paragraph(full_school_name, school_cell_style)]
-        
-        for full_col, short_name in DISPLAY_COLS:
-            val = row.get(full_col, None)
-            if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
-                matching_col = next((c for c in district_df.columns if short_name in str(c)), None)
-                val = row.get(matching_col, "-") if matching_col else "-"
+        matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
+        matrix_data = [matrix_hdr]
+
+        for _, row in chunk_df.iterrows():
+            full_school_name = str(row.get("学校名", "-")).replace("静岡県立", "県立").replace("静岡市立", "市立")
+            row_cells = [Paragraph(full_school_name, school_cell_style)]
             
-            val_short = str(val).replace("（「自転車安全整備店の章」を有する自転車店）", "")\
-                               .replace("変形ハンドルは一切禁止（極端なアップハンドル、カマキリ型、ドロップハンドルなど）", "変形禁止")\
-                               .replace("両立スタンド（Wスタンド）を推奨もしくは、望ましい", "Wスタンド推奨")\
-                               .replace("二重施錠（Wロック／ツーロック）を義務付けている", "二重施錠義務")
-            row_cells.append(Paragraph(val_short, cell_style))
-        matrix_data.append(row_cells)
+            for full_col, short_name in DISPLAY_COLS:
+                val = row.get(full_col, None)
+                if pd.isna(val) or str(val).strip() in ["", "nan", "None"]:
+                    matching_col = next((c for c in district_df.columns if short_name in str(c)), None)
+                    val = row.get(matching_col, "-") if matching_col else "-"
+                
+                val_short = str(val).replace("（「自転車安全整備店の章」を有する自転車店）", "")\
+                                   .replace("変形ハンドルは一切禁止（極端なアップハンドル、カマキリ型、ドロップハンドルなど）", "変形禁止")\
+                                   .replace("両立スタンド（Wスタンド）を推奨もしくは、望ましい", "Wスタンド推奨")\
+                                   .replace("二重施錠（Wロック／ツーロック）を義務付けている", "二重施錠義務")
+                row_cells.append(Paragraph(val_short, cell_style))
+            matrix_data.append(row_cells)
 
-    col_w = [62] + [36.5] * 20
-    m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
-    m_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 1),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
-        ('LEFTPADDING', (0,0), (-1,-1), 1),
-        ('RIGHTPADDING', (0,0), (-1,-1), 1),
-    ]))
+        col_w = [62] + [36.5] * 20
+        m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
+        m_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
+            ('TOPPADDING', (0,0), (-1,-1), 2),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+            ('LEFTPADDING', (0,0), (-1,-1), 1),
+            ('RIGHTPADDING', (0,0), (-1,-1), 1),
+        ]))
 
-    story.append(m_table)
+        story.append(m_table)
+        
+        # 最後のページ以外は改ページを入れる
+        if i + chunk_size < len(district_df):
+            story.append(PageBreak())
 
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10, leftMargin=10, topMargin=10, bottomMargin=10)
     doc.build(story)
@@ -441,7 +452,7 @@ try:
         
         # 1. FAX用まとめPDF
         if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
-            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横 1枚・全20項目）")
+            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横・1画面5校分割・全20項目）")
             
             fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey)
             st.download_button(
