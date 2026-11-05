@@ -126,26 +126,41 @@ def normalize_school_name(value):
     name = str(value).strip()
     return name.replace(" ", "").replace(" ", "")
 
-# --- データ取得の補助関数（確実にデータを参照する） ---
+# --- 確実なデータ読み出し用・強力検索関数（6,9,16,18等の不一致を完全解決） ---
 def fetch_cell_value(school_data, full_col, short_label):
+    num_prefix = short_label.split(":")[0] + ":" if ":" in short_label else ""
+    clean_label = short_label.split(":")[-1] if ":" in short_label else short_label
+    
     # 1. 完全一致
     if full_col in school_data and pd.notna(school_data[full_col]):
-        v = str(school_data[full_col]).strip()
-        if v and v.lower() not in ["nan", "none"]:
-            return v
+        val = str(school_data[full_col]).strip()
+        if val and val.lower() not in ["nan", "none"]:
+            return val
             
-    # 2. 簡易表記・部分一致の検索
-    clean_label = short_label.split(":")[-1] if ":" in short_label else short_label
-    for k, v in school_data.items():
-        if pd.notna(v):
-            v_str = str(v).strip()
-            if v_str and v_str.lower() not in ["nan", "none"]:
-                # カラム名に主要キーワードが含まれているか判定
-                if clean_label in str(k) or full_col[:4] in str(k):
-                    return v_str
+    # 2. スプレッドシート列名からの柔軟・複数キーワード一致判定
+    for col_name, val in school_data.items():
+        if pd.notna(val):
+            val_str = str(val).strip()
+            if val_str and val_str.lower() not in ["nan", "none"]:
+                c_str = str(col_name).strip()
+                # 番号一致（例: "6:"や"16:"）
+                if num_prefix and c_str.startswith(num_prefix):
+                    return val_str
+                # キーワード部分一致
+                if (clean_label in c_str) or (full_col[:4] in c_str):
+                    return val_str
+                # 特有の表記揺れパターン
+                if "色" in full_col and ("色" in c_str or "車体" in c_str):
+                    return val_str
+                if "荷台" in full_col and ("荷台" in c_str or "キャリア" in c_str):
+                    return val_str
+                if "ヘルメット" in full_col and "変更" in full_col and ("着用" in c_str or "変更" in c_str or "制度" in c_str):
+                    return val_str
+                if "ヘルメット" in full_col and "不足" in full_col and ("不足" in c_str or "対応" in c_str):
+                    return val_str
     return "-"
 
-# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・データ完全表示版） ---
+# --- 1. 個別学校 回答PDF生成機能（A4縦 1枚・データ全完全取得版） ---
 def generate_school_pdf(school_data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -226,8 +241,8 @@ def generate_district_fax_pdf(area_name, district_df):
             full_school_name = str(row.get("学校名", "-"))
             row_cells = [Paragraph(full_school_name, school_cell_style)]
             
+            row_dict = row.to_dict()
             for full_col, short_name in DISPLAY_COLS:
-                row_dict = row.to_dict()
                 val_str = fetch_cell_value(row_dict, full_col, short_name)
                 row_cells.append(Paragraph(val_str, cell_style))
             matrix_data.append(row_cells)
