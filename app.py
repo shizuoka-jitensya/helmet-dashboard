@@ -12,7 +12,7 @@ JST = timezone(timedelta(hours=9))
 
 # ReportLab関連ライブラリ（日本語フォント設定・レイアウト用）
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
@@ -213,7 +213,7 @@ def generate_school_pdf(school_data):
     buffer.seek(0)
     return buffer
 
-# --- 2. FAX用 地区別一覧PDF生成機能（1シート5校ピッタリ収納版 A4横） ---
+# --- 2. FAX用 地区別一覧PDF生成機能（上限なし連続表示・ヘッダー自動繰り返し版 A4横） ---
 def generate_district_fax_pdf(area_name, district_df):
     buffer = io.BytesIO()
     
@@ -224,46 +224,44 @@ def generate_district_fax_pdf(area_name, district_df):
     cell_style = ParagraphStyle('D_Cell', parent=styles['Normal'], fontName=JAPANESE_FONT, fontSize=7.0, leading=8.2)
     
     story = []
-    chunk_size = 5
+    total_schools = len(district_df)
 
-    for i in range(0, len(district_df), chunk_size):
-        chunk_df = district_df.iloc[i:i+chunk_size]
-        page_num = (i // chunk_size) + 1
-        total_pages = ((len(district_df) - 1) // chunk_size) + 1
+    story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全{total_schools}校・全20項目）</b>", title_style))
+    story.append(Spacer(1, 4))
 
-        story.append(Paragraph(f"<b>【{area_name}地区】 各高校 自転車通学・ヘルメット着用状況 回答一覧表（全20項目） [{page_num}/{total_pages}ページ]</b>", title_style))
-        story.append(Spacer(1, 4))
+    matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
+    matrix_data = [matrix_hdr]
 
-        matrix_hdr = [Paragraph("<b>学校名</b>", hdr_style)] + [Paragraph(f"<b>{short_name}</b>", hdr_style) for _, short_name in DISPLAY_COLS]
-        matrix_data = [matrix_hdr]
-
-        for _, row in chunk_df.iterrows():
-            full_school_name = str(row.get("学校名", "-"))
-            row_cells = [Paragraph(full_school_name, school_cell_style)]
-            
-            row_dict = row.to_dict()
-            for full_col, short_name in DISPLAY_COLS:
-                val_str = fetch_cell_value(row_dict, full_col, short_name)
-                row_cells.append(Paragraph(val_str, cell_style))
-            matrix_data.append(row_cells)
-
-        col_w = [62] + [36.5] * 20
-        m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
-        m_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-            ('TOPPADDING', (0,0), (-1,-1), 1.8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 1.8),
-            ('LEFTPADDING', (0,0), (-1,-1), 1.5),
-            ('RIGHTPADDING', (0,0), (-1,-1), 1.5),
-        ]))
-
-        story.append(m_table)
+    for _, row in district_df.iterrows():
+        full_school_name = str(row.get("学校名", "-"))
+        row_cells = [Paragraph(full_school_name, school_cell_style)]
         
-        if i + chunk_size < len(district_df):
-            story.append(PageBreak())
+        row_dict = row.to_dict()
+        for full_col, short_name in DISPLAY_COLS:
+            val_str = fetch_cell_value(row_dict, full_col, short_name)
+            row_cells.append(Paragraph(val_str, cell_style))
+        matrix_data.append(row_cells)
+
+    col_w = [62] + [36.5] * 20
+    # repeatRows=1 により、次ページへ続いた際も先頭の項目ヘッダー行が自動で表示される
+    m_table = Table(matrix_data, colWidths=col_w, repeatRows=1)
+    
+    table_styles = [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
+        ('TOPPADDING', (0,0), (-1,-1), 1.8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.8),
+        ('LEFTPADDING', (0,0), (-1,-1), 1.5),
+        ('RIGHTPADDING', (0,0), (-1,-1), 1.5),
+    ]
+    # 各高校の行がページをまたいで途中で分断されないようにする
+    for row_idx in range(1, len(matrix_data)):
+        table_styles.append(('NOSPLIT', (0, row_idx), (-1, row_idx)))
+
+    m_table.setStyle(TableStyle(table_styles))
+    story.append(m_table)
 
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10, leftMargin=10, topMargin=10, bottomMargin=10)
     doc.build(story)
@@ -472,7 +470,7 @@ try:
         
         # 1. FAX用まとめPDF
         if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
-            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横・1画面5校分割・全20項目）")
+            st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横・連続表示・全20項目）")
             
             fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey)
             st.download_button(
