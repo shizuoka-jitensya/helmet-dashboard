@@ -101,12 +101,12 @@ def load_csv_data(url):
     except Exception:
         return pd.DataFrame()
 
-def get_area_by_address_only(address_text):
+def get_area_by_address_only(address_text, default_area="要確認"):
     if pd.isna(address_text):
-        return "要確認"
+        return default_area
     address = str(address_text).strip()
     if not address or address.lower() in {"nan", "none"}:
-        return "要確認"
+        return default_area
     
     all_rules = [
         (keyword, area)
@@ -118,7 +118,7 @@ def get_area_by_address_only(address_text):
     for keyword, area in all_rules:
         if keyword in address:
             return area
-    return "要確認"
+    return default_area
 
 def normalize_school_name(value):
     if pd.isna(value):
@@ -358,10 +358,10 @@ try:
     def get_master_area(row):
         if master_area_col and pd.notna(row.get(master_area_col)):
             area = str(row[master_area_col]).strip()
-            if area in AREA_RULES_ADDR:
+            if area in AREA_RULES_ADDR or area == "その他":
                 return area
         if master_addr_col and pd.notna(row.get(master_addr_col)):
-            return get_area_by_address_only(row.get(master_addr_col, ""))
+            return get_area_by_address_only(row.get(master_addr_col, ""), default_area="要確認")
         return "要確認"
 
     if not df_master.empty:
@@ -393,14 +393,25 @@ try:
 
     def judge_survey_area_by_address(row):
         if survey_school_col and pd.notna(row[survey_school_col]):
-            s_name = normalize_school_name(row[survey_school_col])
-            if s_name in school_area_map and school_area_map[s_name] in AREA_RULES_ADDR:
-                return school_area_map[s_name]
+            raw_name = str(row[survey_school_col]).strip()
+            s_name = normalize_school_name(raw_name)
+            
+            # 定時制（または通信制等）はリスト外のため「その他」地区に振り分け
+            if "定時制" in s_name or "通信制" in s_name:
+                return "その他"
+                
+            if s_name in school_area_map:
+                if school_area_map[s_name] in AREA_RULES_ADDR or school_area_map[s_name] == "その他":
+                    return school_area_map[s_name]
             if s_name in school_address_map:
-                return get_area_by_address_only(school_address_map[s_name])
+                return get_area_by_address_only(school_address_map[s_name], default_area="その他")
+
+            # 送付先学校一覧（マスター）に存在しない学校の場合、住所判定できなければ「その他」にする
+            addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
+            return get_area_by_address_only(addr_text, default_area="その他")
 
         addr_text = str(row[survey_addr_col]).strip() if survey_addr_col and pd.notna(row[survey_addr_col]) else ""
-        return get_area_by_address_only(addr_text)
+        return get_area_by_address_only(addr_text, default_area="要確認")
 
     if not df_survey.empty and survey_school_col:
         df_survey["地区"] = df_survey.apply(judge_survey_area_by_address, axis=1)
@@ -412,7 +423,7 @@ try:
 
     # サイドバー絞り込み
     st.sidebar.header("🔍 絞り込み検索")
-    area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["要確認", "その他"]
+    area_list = ["すべての地区（全県）"] + list(AREA_RULES_ADDR.keys()) + ["その他", "要確認"]
     default_index = 0
     if store.get("地区") in AREA_RULES_ADDR:
         default_index = area_list.index(store.get("地区"))
@@ -468,8 +479,8 @@ try:
     with tab1:
         st.subheader("📄 PDF印刷・出力（個別の学校 ＆ FAX用地区別まとめ）")
         
-        # 1. FAX用まとめPDF
-        if selected_area not in ["すべての地区（全県）", "要確認", "その他"] and not filtered_survey.empty:
+        # 1. FAX用まとめPDF（「その他」地区も含め全地区出力可能）
+        if selected_area not in ["すべての地区（全県）", "要確認"] and not filtered_survey.empty:
             st.markdown(f"#### 📠 【{selected_area}地区】 FAX用 地区内全校回答一覧PDF（A4横・連続表示・全20項目）")
             
             fax_pdf_bytes = generate_district_fax_pdf(selected_area, filtered_survey)
@@ -496,9 +507,9 @@ try:
                 mime="application/pdf"
             )
             
-            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', '要確認')}地区）")
+            st.markdown(f"##### 📋 【{selected_school_name}】 回答詳細（所属地区：{school_data.get('地区', 'その他')}地区）")
             
-            display_items = [("所属地区", f"{school_data.get('地区', '要確認')}地区")]
+            display_items = [("所属地区", f"{school_data.get('地区', 'その他')}地区")]
             for full_col, short_name in DISPLAY_COLS:
                 val = fetch_cell_value(school_data, full_col, short_name)
                 display_items.append((f"{short_name} ({full_col[:15]})", val))
