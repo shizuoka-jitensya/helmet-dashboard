@@ -436,15 +436,15 @@ try:
         with st.sidebar.expander("🛠️ 事務局・管理者用 運用マニュアル", expanded=False):
             st.markdown("""
             ### 🛠️ 事務局管理者マニュアル
-            * **参照用シート**: `組合員向け集計シート` の **「作業用_地区別ベース_修正済み」** および **「送付先学校一覧」** を参照しています。
-            * **データ修正**: 元データを直接触らず、`組合員向け集計シート` 側で手動修正・反映が可能です。
+- **参照用シート**: `組合員向け集計シート` の **「作業用_地区別ベース_修正済み」** および **「送付先学校一覧」** を参照しています。
+- **データ修正**: 元データを直接触らず、`組合員向け集計シート` 側で手動修正・反映が可能です。
             """)
     else:
         with st.sidebar.expander("📖 ご利用ガイド・印刷方法", expanded=False):
             st.markdown("""
             **【基本的な使い方】**
-            1. **自地区のデータ表示**: ログインすると自地区の高校が表示されます。
-            2. **PDF保存**: 「回答PDFを保存・印刷」でA4サイズのシートを出力できます。
+1. **自地区のデータ表示**: ログインすると自地区の高校が表示されます。
+2. **PDF保存**: 「回答PDFを保存・印刷」でA4サイズのシートを出力できます。
             """)
 
     # データ絞り込み
@@ -540,12 +540,18 @@ try:
     with tab3:
         st.subheader("⚠️ 未回答校の進捗管理")
         if not df_master.empty and master_school_col:
-            answered_schools = df_survey[survey_school_col].dropna().astype(str).tolist() if not df_survey.empty and survey_school_col else []
+            # スペース等を除去した完全一致セットを作成（「富士宮東高等学校（定時制）」等の誤一致を防止）
+            answered_set = {
+                normalize_school_name(s)
+                for s in df_survey[survey_school_col].dropna().tolist()
+                if normalize_school_name(s)
+            } if not df_survey.empty and survey_school_col else set()
+
             df_master["回答ステータス"] = df_master[master_school_col].apply(
-                lambda x: "回答済み" if any(ans in str(x) or str(x) in ans for ans in answered_schools) else "未回答"
+                lambda x: "回答済み" if normalize_school_name(x) in answered_set else "未回答"
             )
             df_unanswered = df_master[df_master["回答ステータス"] == "未回答"]
-            if selected_area not in ["すべての地区（全県）", "要確認", "その他"]:
+            if selected_area != "すべての地区（全県）":
                 df_unanswered = df_unanswered[df_unanswered["地区"] == selected_area]
 
             st.warning(f"現在、対象 {len(df_master)} 校中 **{len(df_unanswered)} 校** が未回答です。")
